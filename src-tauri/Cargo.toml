@@ -1,0 +1,28 @@
+[package]
+name = "rtsp_viewer_tauri"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+rtsp_core = { path = "../crates/core" }
+rtsp_config = { path = "../crates/config" }
+rtsp_media = { path = "../crates/media" }
+rtsp_secrets = { path = "../crates/secrets" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+base64 = "0.22"
+chrono = { version = "0.4", features = ["clock"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "fs"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+url = "2"
+tauri = { version = "1.8", features = ["dialog-open", "dialog-save", "fs-all", "path-all", "window-set-fullscreen"] }
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,11 @@
+[package]
+name = "rtsp_config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rtsp_core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
