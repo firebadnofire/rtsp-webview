@@ -51,6 +51,32 @@ select {
   box-shadow: var(--shadow);
 }
 
+.empty-workspace {
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  box-shadow: var(--shadow);
+  padding: 28px;
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+}
+
+.empty-workspace h2 {
+  margin: 0;
+}
+
+.empty-workspace p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.empty-workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .toolbar {
   display: flex;
   justify-content: space-between;
@@ -251,9 +277,33 @@ button:disabled {
   align-items: center;
 }
 
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .panel-header h3 {
   margin: 0;
   font-size: 1.03rem;
+}
+
+.subtype-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  color: #3a4a41;
+}
+
+.subtype-picker select {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: #fff;
+  font-size: 0.76rem;
 }
 
 .status-chip {

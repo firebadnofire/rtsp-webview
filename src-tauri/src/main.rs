@@ -4,12 +4,19 @@ mod app_state;
 mod commands;
 mod errors;
 mod events;
+mod startup_checks;
 mod state;
 mod stub_streams;
 
 use app_state::ManagedState;
 
 fn main() {
+    let context = tauri::generate_context!();
+    if let Err(message) = startup_checks::preflight_frontend(&context) {
+        eprintln!("Frontend preflight failed: {}", message);
+        std::process::exit(1);
+    }
+
     tauri::Builder::default()
         .manage(ManagedState::new())
         .invoke_handler(tauri::generate_handler![
@@ -33,6 +40,6 @@ fn main() {
             commands::create_screen,
             commands::delete_screen,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }

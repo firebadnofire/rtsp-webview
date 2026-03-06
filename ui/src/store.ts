@@ -62,6 +62,7 @@ export const rangeInclusive = (start: number, end: number): number[] => {
 }
 
 const replaceToken = (input: string, token: string, value: string): string => input.split(token).join(value)
+const encodeCredentialToken = (value: string): string => encodeURIComponent(value)
 
 export const resolveAutoPopulateRtspUrl = (
   tool: AutoPopulateTool,
@@ -71,8 +72,8 @@ export const resolveAutoPopulateRtspUrl = (
   let url = tool.base_url_template
   url = replaceToken(url, '$cameraNum', String(cameraNum))
   url = replaceToken(url, '$subNum', String(subNum))
-  url = replaceToken(url, '$USERNAME', tool.username)
-  url = replaceToken(url, '$PASSWORD', tool.password)
+  url = replaceToken(url, '$USERNAME', encodeCredentialToken(tool.username))
+  url = replaceToken(url, '$PASSWORD', encodeCredentialToken(tool.password))
   url = replaceToken(url, '$IP', tool.ip)
   url = replaceToken(url, '$PORT', tool.port)
   return url

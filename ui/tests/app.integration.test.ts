@@ -172,4 +172,98 @@ describe('app integration', () => {
 
     await app.destroy()
   })
+
+  it('shows empty-workspace actions and disables screen-only controls when no screens exist', async () => {
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const ipc = createMockIpc()
+    ;(ipc.getState as ReturnType<typeof vi.fn>).mockResolvedValue(makeState(0))
+
+    const events = new MockEventClient()
+    const app = createRtspViewerApp(root, { ipc, events })
+    await app.start()
+    await flush()
+
+    const emptyManual = root.querySelector('[data-action="empty-manual-setup"]')
+    const emptyBulk = root.querySelector('[data-action="empty-open-auto-populate"]')
+    const startScreen = root.querySelector('[data-action="start-screen"]') as HTMLButtonElement
+    const startAll = root.querySelector('[data-action="start-all"]') as HTMLButtonElement
+
+    expect(emptyManual).not.toBeNull()
+    expect(emptyBulk).not.toBeNull()
+    expect(startScreen.disabled).toBe(true)
+    expect(startAll.disabled).toBe(true)
+
+    await app.destroy()
+  })
+
+  it('creates first screen and opens settings from empty manual setup action', async () => {
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const ipc = createMockIpc()
+    let state = makeState(0)
+    ;(ipc.getState as ReturnType<typeof vi.fn>).mockImplementation(async () => state)
+    ;(ipc.createScreen as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      state = makeState(1)
+      return 0
+    })
+
+    const events = new MockEventClient()
+    const app = createRtspViewerApp(root, { ipc, events })
+    await app.start()
+    await flush()
+
+    const createFirst = root.querySelector('[data-action="empty-manual-setup"]') as HTMLButtonElement
+    createFirst.click()
+    await flush()
+    await flush()
+
+    expect(ipc.createScreen).toHaveBeenCalledTimes(1)
+    expect(root.querySelector('[data-action="submit-settings"]')).not.toBeNull()
+
+    await app.destroy()
+  })
+
+  it('updates panel config and credentials when subtype is changed from panel dropdown', async () => {
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const state = makeState(1)
+    state.auto_populate_tool.ip = '127.0.0.1'
+    state.auto_populate_tool.username = 'admin'
+    state.auto_populate_tool.password = 'pw'
+    state.screens[0].panels[0].config.camera_num = 1
+    state.screens[0].panels[0].config.sub_num = 0
+    state.screens[0].panels[0].config.title = 'Camera 1'
+
+    const ipc = createMockIpc()
+    ;(ipc.getState as ReturnType<typeof vi.fn>).mockResolvedValue(state)
+
+    const events = new MockEventClient()
+    const app = createRtspViewerApp(root, { ipc, events })
+    await app.start()
+    await flush()
+
+    const picker = root.querySelector('[data-subtype-picker="true"][data-panel-id="0"]') as HTMLSelectElement
+    picker.value = '1'
+    picker.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+    await flush()
+
+    expect(ipc.updatePanelConfig).toHaveBeenCalledWith(
+      0,
+      0,
+      expect.objectContaining({
+        camera_num: 1,
+        sub_num: 1,
+        host: '127.0.0.1',
+        port: 554
+      })
+    )
+    expect(ipc.setPanelSecret).toHaveBeenCalledWith(0, 0, 'admin', 'pw')
+
+    await app.destroy()
+  })
 })

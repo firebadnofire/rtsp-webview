@@ -1,6 +1,7 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { tauriEventClient, type EventClient } from './events'
 import { tauriIpcClient, type IpcClient } from './ipc'
+import { renderEmptyWorkspace } from './components/empty-workspace'
 import { renderFullscreenHint } from './components/fullscreen-hint'
 import { renderGlobalSettingsPage } from './components/global-settings-page'
 import { renderNotifications } from './components/notifications'
@@ -76,7 +77,8 @@ const createFallbackState = (): GetStateResponse => ({
   active_panel_per_screen: [],
   fullscreen: false,
   auto_populate_tool: {
-    base_url_template: 'rtsp://$USERNAME:$PASSWORD@$IP:$PORT/cam/realmonitor?channel=$cameraNum&subtype=$subNum',
+    base_url_template:
+      'rtsp://$USERNAME:$PASSWORD@$IP:$PORT/cam/realmonitor?channel=$cameraNum&subtype=$subNum',
     username: '',
     password: '',
     ip: '',
@@ -210,9 +212,22 @@ export class RtspViewerApp {
     }
   }
 
-  private readonly handleChange = (event: Event): void => {
+  private readonly handleChange = async (event: Event): Promise<void> => {
     const target = event.target
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
+      return
+    }
+
+    if (target.dataset.subtypePicker === 'true' && target instanceof HTMLSelectElement) {
+      const screenId = Number(target.dataset.screenId)
+      const panelId = Number(target.dataset.panelId)
+      const subtypeValue = Number(target.value)
+      if (!Number.isFinite(screenId) || !Number.isFinite(panelId) || !Number.isFinite(subtypeValue)) {
+        return
+      }
+      await this.execute(async () => {
+        await this.applySubtypeSelection(screenId, panelId, clampInt(subtypeValue, 0, 9999))
+      })
       return
     }
 
@@ -360,6 +375,15 @@ export class RtspViewerApp {
           await this.deps.ipc.createScreen()
           await this.syncState()
           break
+        case 'empty-manual-setup': {
+          const createdScreenId = await this.deps.ipc.createScreen()
+          await this.syncState()
+          this.openSettings(createdScreenId, 0)
+          break
+        }
+        case 'empty-open-auto-populate':
+          this.store.openAutoPopulateTool()
+          break
         case 'delete-screen':
           await this.deps.ipc.deleteScreen(screenId)
           await this.syncState()
@@ -483,6 +507,35 @@ export class RtspViewerApp {
       this.store.openAutoPopulateTool()
       this.notify('success', 'Auto-population complete')
     })
+  }
+
+  private async applySubtypeSelection(screenId: number, panelId: number, subNum: number): Promise<void> {
+    const snapshot = this.store.snapshot()
+    const data = snapshot.data
+    if (!data) {
+      return
+    }
+
+    const panel = data.screens[screenId]?.panels[panelId]
+    if (!panel || panel.config.camera_num === null) {
+      return
+    }
+
+    const cameraNum = panel.config.camera_num
+    const resolved = resolveAutoPopulateRtspUrl(data.auto_populate_tool, cameraNum, subNum)
+    const parsed = parseRtspUrl(resolved)
+    const patch: PanelConfigPatch = {
+      title: `Camera ${cameraNum}`,
+      host: parsed.host,
+      port: clampInt(parsed.port, 1, 65535),
+      path: parsed.path,
+      camera_num: cameraNum,
+      sub_num: subNum
+    }
+
+    await this.deps.ipc.updatePanelConfig(screenId, panelId, patch)
+    await this.deps.ipc.setPanelSecret(screenId, panelId, parsed.username, parsed.password)
+    await this.syncState()
   }
 
   private createAdvancedPatch(current: PanelConfig, modal: SettingsModalState): PanelConfigPatch['advanced'] {
@@ -652,6 +705,8 @@ export class RtspViewerApp {
 
     const activeScreen = state.data.screens[state.data.active_screen]
     const activePanelId = state.data.active_panel_per_screen[state.data.active_screen] ?? 0
+    const hasScreens = state.data.screens.length > 0
+    const subtypeOptions = toolRanges(state.data).subtypeNumbers
 
     const cards = activeScreen
       ? activeScreen.panels
@@ -661,7 +716,8 @@ export class RtspViewerApp {
               panelId,
               panel,
               active: panelId === activePanelId,
-              frameUrl: this.store.frameDataUrl(activeScreen.id, panelId)
+              frameUrl: this.store.frameDataUrl(activeScreen.id, panelId),
+              subtypeOptions: subtypeOptions.length > 0 ? subtypeOptions : [0]
             })
           )
           .join('')
@@ -713,14 +769,7 @@ export class RtspViewerApp {
       }
     }
 
-    let contentMarkup = `${renderTabs(state.data)}
-      ${renderFullscreenHint(state.data.fullscreen)}
-      ${
-        cards.length > 0
-          ? `<section class="screen-grid">${cards}</section>`
-          : '<section class="loading">No screens yet. Use Auto-population Tool or create a screen manually.</section>'
-      }`
-
+    let contentMarkup = ''
     if (state.autoPopulateToolOpen && state.autoPopulateToolForm) {
       const cameraStart = clampInt(parseNumber(state.autoPopulateToolForm.cameraNumStart, 0), 0, 9999)
       const cameraEnd = clampInt(parseNumber(state.autoPopulateToolForm.cameraNumEnd, cameraStart), 0, 9999)
@@ -733,6 +782,12 @@ export class RtspViewerApp {
         cameraCount,
         subtypeCount
       })
+    } else if (!hasScreens) {
+      contentMarkup = renderEmptyWorkspace()
+    } else {
+      contentMarkup = `${renderTabs(state.data)}
+        ${renderFullscreenHint(state.data.fullscreen)}
+        <section class="screen-grid">${cards}</section>`
     }
 
     const focusSnapshot = this.captureFocusSnapshot()

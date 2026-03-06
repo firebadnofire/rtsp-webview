@@ -1,7 +1,6 @@
 use crate::errors::CommandError;
 use rtsp_core::{
-    ConfigLoadedEvent, PanelFrameEvent, PanelStatusEvent, SecurityNoticeEvent, SnapshotFailedEvent,
-    SnapshotSavedEvent,
+    ConfigLoadedEvent, PanelFrameEvent, PanelStatusEvent, SnapshotFailedEvent, SnapshotSavedEvent,
 };
 use tauri::{AppHandle, Manager};
 
@@ -33,13 +32,5 @@ pub fn emit_snapshot_failed(
     payload: SnapshotFailedEvent,
 ) -> Result<(), CommandError> {
     app.emit_all("snapshot_failed", payload)
-        .map_err(|error| CommandError::internal(error.to_string()))
-}
-
-pub fn emit_security_notice(
-    app: &AppHandle,
-    payload: SecurityNoticeEvent,
-) -> Result<(), CommandError> {
-    app.emit_all("security_notice", payload)
         .map_err(|error| CommandError::internal(error.to_string()))
 }

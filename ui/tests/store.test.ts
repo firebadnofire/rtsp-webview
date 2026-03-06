@@ -88,6 +88,8 @@ describe('store', () => {
     const resolved = resolveAutoPopulateRtspUrl(state.auto_populate_tool, 1, 0)
     expect(resolved).toContain('channel=1')
     expect(resolved).toContain('subtype=0')
+    expect(resolved).toContain('Plumbing1%40')
+    expect(resolved).not.toContain('Plumbing1@')
 
     const redacted = redactRtspPassword(resolved, false)
     expect(redacted).toContain('***')

@@ -40,7 +40,8 @@ export const makeState = (screenCount = 4): GetStateResponse => ({
   active_panel_per_screen: Array.from({ length: screenCount }, () => 0),
   fullscreen: false,
   auto_populate_tool: {
-    base_url_template: 'rtsp://$USERNAME:$PASSWORD@$IP:$PORT/cam/realmonitor?channel=$cameraNum&subtype=$subNum',
+    base_url_template:
+      'rtsp://$USERNAME:$PASSWORD@$IP:$PORT/cam/realmonitor?channel=$cameraNum&subtype=$subNum',
     username: '',
     password: '',
     ip: '',

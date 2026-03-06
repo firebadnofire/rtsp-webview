@@ -374,6 +374,7 @@ impl AppRuntimeState {
     pub fn merge_loaded_config(
         &mut self,
         loaded: AppConfig,
+        external_secrets: HashMap<String, PanelSecret>,
     ) -> Result<LoadMergeOutcome, CommandError> {
         validate_app_config(&loaded)?;
 
@@ -400,6 +401,10 @@ impl AppRuntimeState {
                     previous_secret_map.insert(panel.config.secret_ref.key.clone(), secret.clone());
                 }
             }
+        }
+
+        for (key, value) in external_secrets {
+            previous_secret_map.entry(key).or_insert(value);
         }
 
         let mut new_runtime = Self::from_config(loaded, previous_secret_map);
@@ -536,7 +541,7 @@ mod tests {
 
         let loaded = runtime.to_app_config();
         let outcome = runtime
-            .merge_loaded_config(loaded)
+            .merge_loaded_config(loaded, HashMap::new())
             .expect("merge should work");
         assert!(outcome.stop_keys.is_empty());
         assert!(outcome.restart_keys.is_empty());

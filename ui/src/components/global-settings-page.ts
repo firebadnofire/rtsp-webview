@@ -12,7 +12,9 @@ export const renderGlobalSettingsPage = ({
   cameraCount,
   subtypeCount
 }: AutoPopulateToolInput): string => {
-  const summary = `${cameraCount} cameras and ${subtypeCount} subtypes available`
+  const panelCount = cameraCount
+  const screenCount = panelCount === 0 ? 0 : Math.ceil(panelCount / 4)
+  const summary = `${cameraCount} cameras with ${subtypeCount} subtype options = ${panelCount} panels (${screenCount} screens)`
 
   return `<section class="global-settings-page">
     <header class="global-settings-header">
@@ -36,16 +38,16 @@ export const renderGlobalSettingsPage = ({
         <label>Port Token Value
           <input data-tool-field="port" value="${escapeHtml(form.port)}" />
         </label>
-        <label>Camera Number Start
+        <label>Camera Channel Range Start
           <input data-tool-field="cameraNumStart" type="number" min="0" value="${escapeHtml(form.cameraNumStart)}" />
         </label>
-        <label>Camera Number End
+        <label>Camera Channel Range End
           <input data-tool-field="cameraNumEnd" type="number" min="0" value="${escapeHtml(form.cameraNumEnd)}" />
         </label>
-        <label>Subtype Start
+        <label>Subtype Range Start
           <input data-tool-field="subNumStart" type="number" min="0" value="${escapeHtml(form.subNumStart)}" />
         </label>
-        <label>Subtype End
+        <label>Subtype Range End
           <input data-tool-field="subNumEnd" type="number" min="0" value="${escapeHtml(form.subNumEnd)}" />
         </label>
       </div>
