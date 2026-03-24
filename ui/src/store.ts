@@ -1,4 +1,5 @@
 import type {
+  AppSettingsModalState,
   AutoPopulateTool,
   AutoPopulateToolFormState,
   GetStateResponse,
@@ -15,12 +16,20 @@ export interface UiStoreState {
   frames: Record<string, PanelFrameEvent>
   revealPassword: Record<string, boolean>
   modal: SettingsModalState | null
+  appSettingsModal: AppSettingsModalState | null
   notifications: NotificationItem[]
   autoPopulateToolOpen: boolean
   autoPopulateToolForm: AutoPopulateToolFormState | null
 }
 
 type Listener = (state: UiStoreState) => void
+type FrameListener = (event: PanelFrameEvent) => void
+interface FrameStats {
+  timestamps: number[]
+  fps: number | null
+}
+
+const FRAME_RATE_SAMPLE_LIMIT = 12
 
 export const panelKey = (screenId: number, panelId: number): string => `${screenId}:${panelId}`
 
@@ -130,7 +139,9 @@ export const toAutoPopulateToolFormState = (state: GetStateResponse): AutoPopula
 export class UiStore {
   private state: UiStoreState
   private listeners = new Set<Listener>()
+  private frameListeners = new Set<FrameListener>()
   private notificationCounter = 0
+  private frameStats: Record<string, FrameStats> = {}
 
   constructor() {
     this.state = {
@@ -138,6 +149,7 @@ export class UiStore {
       frames: {},
       revealPassword: {},
       modal: null,
+      appSettingsModal: null,
       notifications: [],
       autoPopulateToolOpen: false,
       autoPopulateToolForm: null
@@ -152,12 +164,22 @@ export class UiStore {
     }
   }
 
+  subscribeFrames(listener: FrameListener): () => void {
+    this.frameListeners.add(listener)
+    return () => {
+      this.frameListeners.delete(listener)
+    }
+  }
+
   snapshot(): UiStoreState {
     return {
       data: this.state.data,
       frames: { ...this.state.frames },
       revealPassword: { ...this.state.revealPassword },
       modal: this.state.modal ? { ...this.state.modal, form: { ...this.state.modal.form } } : null,
+      appSettingsModal: this.state.appSettingsModal
+        ? { ...this.state.appSettingsModal, form: { ...this.state.appSettingsModal.form } }
+        : null,
       notifications: [...this.state.notifications],
       autoPopulateToolOpen: this.state.autoPopulateToolOpen,
       autoPopulateToolForm: this.state.autoPopulateToolForm ? { ...this.state.autoPopulateToolForm } : null
@@ -166,8 +188,21 @@ export class UiStore {
 
   setData(data: GetStateResponse): void {
     this.state.data = data
+    const validKeys = new Set(
+      data.screens.flatMap((screen) => screen.panels.map((_, panelId) => panelKey(screen.id, panelId)))
+    )
+    this.state.frames = Object.fromEntries(Object.entries(this.state.frames).filter(([key]) => validKeys.has(key)))
+    this.frameStats = Object.fromEntries(Object.entries(this.frameStats).filter(([key]) => validKeys.has(key)))
     if (this.state.autoPopulateToolOpen) {
       this.state.autoPopulateToolForm = toAutoPopulateToolFormState(data)
+    }
+    if (this.state.appSettingsModal) {
+      this.state.appSettingsModal = {
+        form: {
+          previewFps: String(data.stream_defaults.preview_fps),
+          autoManagePreviewFps: data.stream_defaults.auto_manage_preview_fps
+        }
+      }
     }
     this.emit()
   }
@@ -193,6 +228,40 @@ export class UiStore {
 
   closeModal(): void {
     this.state.modal = null
+    this.emit()
+  }
+
+  openAppSettingsModal(): void {
+    if (!this.state.data) {
+      return
+    }
+    this.state.appSettingsModal = {
+      form: {
+        previewFps: String(this.state.data.stream_defaults.preview_fps),
+        autoManagePreviewFps: this.state.data.stream_defaults.auto_manage_preview_fps
+      }
+    }
+    this.emit()
+  }
+
+  updateAppSettingsField<K extends keyof AppSettingsModalState['form']>(
+    field: K,
+    value: AppSettingsModalState['form'][K]
+  ): void {
+    if (!this.state.appSettingsModal) {
+      return
+    }
+    this.state.appSettingsModal = {
+      form: {
+        ...this.state.appSettingsModal.form,
+        [field]: value
+      }
+    }
+    this.emit()
+  }
+
+  closeAppSettingsModal(): void {
+    this.state.appSettingsModal = null
     this.emit()
   }
 
@@ -238,6 +307,7 @@ export class UiStore {
     if (!this.state.data) {
       return
     }
+    const key = panelKey(event.screen_id, event.panel_id)
     const screen = this.state.data.screens[event.screen_id]
     if (!screen) {
       return
@@ -251,6 +321,10 @@ export class UiStore {
       message: event.message,
       code: event.code
     }
+    if (event.state === 'connecting' || event.state === 'retrying' || event.state === 'error' || event.state === 'stopped' || event.state === 'idle') {
+      delete this.state.frames[key]
+      delete this.frameStats[key]
+    }
     this.emit()
   }
 
@@ -261,7 +335,10 @@ export class UiStore {
       return
     }
     this.state.frames[key] = event
-    this.emit()
+    this.updateFrameStats(key, event)
+    for (const listener of this.frameListeners) {
+      listener(event)
+    }
   }
 
   frameDataUrl(screenId: number, panelId: number): string | null {
@@ -270,6 +347,32 @@ export class UiStore {
       return null
     }
     return `data:${frame.mime};base64,${frame.data_base64}`
+  }
+
+  frame(screenId: number, panelId: number): PanelFrameEvent | null {
+    return this.state.frames[panelKey(screenId, panelId)] ?? null
+  }
+
+  hasFrame(screenId: number, panelId: number): boolean {
+    return Boolean(this.state.frames[panelKey(screenId, panelId)])
+  }
+
+  frameFps(screenId: number, panelId: number): number | null {
+    return this.frameStats[panelKey(screenId, panelId)]?.fps ?? null
+  }
+
+  frameFpsLabel(screenId: number, panelId: number): string {
+    const fps = this.frameFps(screenId, panelId)
+    if (fps === null || !Number.isFinite(fps) || fps <= 0) {
+      return '-- FPS'
+    }
+
+    const rounded = fps >= 10 ? Math.round(fps) : Math.round(fps * 10) / 10
+    return `${Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)} FPS`
+  }
+
+  currentData(): GetStateResponse | null {
+    return this.state.data
   }
 
   addNotification(level: NotificationLevel, message: string): number {
@@ -297,6 +400,29 @@ export class UiStore {
     const snapshot = this.snapshot()
     for (const listener of this.listeners) {
       listener(snapshot)
+    }
+  }
+
+  private updateFrameStats(key: string, event: PanelFrameEvent): void {
+    const timestamp =
+      typeof event.pts_ms === 'number' && Number.isFinite(event.pts_ms) ? event.pts_ms : Date.now()
+    const existing = this.frameStats[key] ?? { timestamps: [], fps: null }
+    const timestamps =
+      existing.timestamps.length > 0 && existing.timestamps[existing.timestamps.length - 1] === timestamp
+        ? existing.timestamps
+        : [...existing.timestamps, timestamp].slice(-FRAME_RATE_SAMPLE_LIMIT)
+
+    let fps = existing.fps
+    if (timestamps.length >= 2) {
+      const durationMs = timestamps[timestamps.length - 1] - timestamps[0]
+      if (durationMs > 0) {
+        fps = ((timestamps.length - 1) * 1000) / durationMs
+      }
+    }
+
+    this.frameStats[key] = {
+      timestamps,
+      fps
     }
   }
 }

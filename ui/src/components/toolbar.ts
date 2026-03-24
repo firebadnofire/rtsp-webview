@@ -3,7 +3,6 @@ import type { GetStateResponse } from '../types'
 export const renderToolbar = (state: GetStateResponse, autoPopulateToolOpen: boolean): string => {
   const hasScreens = state.screens.length > 0
   const screenActionDisabled = hasScreens ? '' : 'disabled'
-  const fullscreenLabel = state.fullscreen ? 'Exit Fullscreen' : 'Fullscreen Active Panel'
   const toolLabel = autoPopulateToolOpen ? 'Close Auto-population Tool' : 'Auto-population Tool'
   return `<header class="toolbar">
     <div class="toolbar-primary">
@@ -13,10 +12,10 @@ export const renderToolbar = (state: GetStateResponse, autoPopulateToolOpen: boo
       <button data-action="stop-all" ${screenActionDisabled}>Stop All Cameras</button>
     </div>
     <div class="toolbar-secondary">
+      <button data-action="open-app-settings">Settings</button>
       <button data-action="toggle-auto-populate-tool">${toolLabel}</button>
       <button data-action="save-config">Save Config</button>
       <button data-action="load-config">Load Config</button>
-      <button data-action="toggle-fullscreen" ${screenActionDisabled}>${fullscreenLabel}</button>
     </div>
   </header>`
 }

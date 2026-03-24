@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
-use std::array;
+use std::{array, collections::HashMap};
 
 pub const IPC_VERSION: &str = "1";
 pub const SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_SCREEN_COUNT: u32 = 0;
 pub const MAX_SCREEN_COUNT: usize = 32;
 pub const PANELS_PER_SCREEN: usize = 4;
+pub const DEFAULT_PREVIEW_FPS: u8 = 12;
+pub const MIN_PREVIEW_FPS: u8 = 1;
+pub const MAX_PREVIEW_FPS: u8 = 30;
+pub const AUTO_PREVIEW_FPS_REFERENCE_STREAMS: usize = PANELS_PER_SCREEN;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ValidationError {
@@ -69,6 +73,28 @@ pub struct AutoPopulateToolPatch {
     pub sub_num_end: Option<u32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamDefaults {
+    pub preview_fps: u8,
+    #[serde(default)]
+    pub auto_manage_preview_fps: bool,
+}
+
+impl Default for StreamDefaults {
+    fn default() -> Self {
+        Self {
+            preview_fps: DEFAULT_PREVIEW_FPS,
+            auto_manage_preview_fps: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamDefaultsPatch {
+    pub preview_fps: Option<u8>,
+    pub auto_manage_preview_fps: Option<bool>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Transport {
@@ -106,6 +132,8 @@ pub struct AdvancedConfig {
     pub retry_max_ms: u32,
     pub retry_jitter_ms: u32,
     pub max_failures: u32,
+    #[serde(default)]
+    pub preview_fps_override: Option<u8>,
 }
 
 impl Default for AdvancedConfig {
@@ -117,6 +145,7 @@ impl Default for AdvancedConfig {
             retry_max_ms: 10_000,
             retry_jitter_ms: 250,
             max_failures: 30,
+            preview_fps_override: None,
         }
     }
 }
@@ -129,6 +158,7 @@ pub struct AdvancedConfigPatch {
     pub retry_max_ms: Option<u32>,
     pub retry_jitter_ms: Option<u32>,
     pub max_failures: Option<u32>,
+    pub preview_fps_override: Option<Option<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +208,12 @@ pub struct UiState {
     pub fullscreen: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedSecret {
+    pub username: String,
+    pub password: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppConfig {
     pub schema_version: u32,
@@ -185,6 +221,10 @@ pub struct AppConfig {
     pub ui_state: UiState,
     #[serde(default)]
     pub auto_populate_tool: AutoPopulateTool,
+    #[serde(default)]
+    pub stream_defaults: StreamDefaults,
+    #[serde(default)]
+    pub saved_secrets: HashMap<String, SavedSecret>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,6 +267,7 @@ pub struct GetStateResponse {
     pub fullscreen: bool,
     pub screens: Vec<ScreenStateView>,
     pub auto_populate_tool: AutoPopulateTool,
+    pub stream_defaults: StreamDefaults,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,7 +374,19 @@ pub fn default_app_config(screen_count: u32) -> AppConfig {
         },
         screens,
         auto_populate_tool: AutoPopulateTool::default(),
+        stream_defaults: StreamDefaults::default(),
+        saved_secrets: HashMap::new(),
     }
+}
+
+fn validate_preview_fps(value: u8, label: &str) -> Result<(), ValidationError> {
+    if !(MIN_PREVIEW_FPS..=MAX_PREVIEW_FPS).contains(&value) {
+        return Err(ValidationError::InvalidConfig(format!(
+            "{} must be between {} and {}",
+            label, MIN_PREVIEW_FPS, MAX_PREVIEW_FPS
+        )));
+    }
+    Ok(())
 }
 
 pub fn validate_panel_config(panel: &PanelConfig) -> Result<(), ValidationError> {
@@ -346,6 +399,9 @@ pub fn validate_panel_config(panel: &PanelConfig) -> Result<(), ValidationError>
         return Err(ValidationError::InvalidConfig(
             "latency_ms must be between 0 and 5000".to_string(),
         ));
+    }
+    if let Some(preview_fps_override) = panel.advanced.preview_fps_override {
+        validate_preview_fps(preview_fps_override, "advanced.preview_fps_override")?;
     }
     Ok(())
 }
@@ -423,7 +479,11 @@ pub fn validate_app_config(config: &AppConfig) -> Result<(), ValidationError> {
         }
     }
 
-    validate_auto_populate_tool(&config.auto_populate_tool)
+    validate_auto_populate_tool(&config.auto_populate_tool)?;
+    validate_preview_fps(
+        config.stream_defaults.preview_fps,
+        "stream_defaults.preview_fps",
+    )
 }
 
 pub fn apply_panel_patch(
@@ -500,6 +560,19 @@ pub fn apply_auto_populate_tool_patch(
     validate_auto_populate_tool(tool)
 }
 
+pub fn apply_stream_defaults_patch(
+    defaults: &mut StreamDefaults,
+    patch: StreamDefaultsPatch,
+) -> Result<(), ValidationError> {
+    if let Some(preview_fps) = patch.preview_fps {
+        defaults.preview_fps = preview_fps;
+    }
+    if let Some(auto_manage_preview_fps) = patch.auto_manage_preview_fps {
+        defaults.auto_manage_preview_fps = auto_manage_preview_fps;
+    }
+    validate_preview_fps(defaults.preview_fps, "stream_defaults.preview_fps")
+}
+
 fn apply_advanced_patch(advanced: &mut AdvancedConfig, patch: AdvancedConfigPatch) {
     if let Some(value) = patch.connection_timeout_ms {
         advanced.connection_timeout_ms = value;
@@ -519,6 +592,31 @@ fn apply_advanced_patch(advanced: &mut AdvancedConfig, patch: AdvancedConfigPatc
     if let Some(value) = patch.max_failures {
         advanced.max_failures = value;
     }
+    if let Some(value) = patch.preview_fps_override {
+        advanced.preview_fps_override = value;
+    }
+}
+
+pub fn managed_preview_fps(defaults: &StreamDefaults, active_stream_count: usize) -> u8 {
+    if !defaults.auto_manage_preview_fps {
+        return defaults.preview_fps;
+    }
+
+    let active_stream_count = active_stream_count.max(1);
+    let total_budget = u16::from(defaults.preview_fps) * AUTO_PREVIEW_FPS_REFERENCE_STREAMS as u16;
+    let scaled = (total_budget + active_stream_count as u16 - 1) / active_stream_count as u16;
+    scaled.clamp(u16::from(MIN_PREVIEW_FPS), u16::from(defaults.preview_fps)) as u8
+}
+
+pub fn effective_preview_fps(
+    panel: &PanelConfig,
+    defaults: &StreamDefaults,
+    active_stream_count: usize,
+) -> u8 {
+    panel
+        .advanced
+        .preview_fps_override
+        .unwrap_or(managed_preview_fps(defaults, active_stream_count))
 }
 
 pub fn secret_key_for(screen_id: u32, panel_id: u8) -> String {
@@ -610,6 +708,65 @@ mod tests {
         config.auto_populate_tool.camera_num_start = 9;
         config.auto_populate_tool.camera_num_end = 1;
         assert!(validate_app_config(&config).is_err());
+    }
+
+    #[test]
+    fn preview_fps_values_are_validated() {
+        let mut config = default_app_config(1);
+        config.stream_defaults.preview_fps = 31;
+        let error = validate_app_config(&config).expect_err("expected validation error");
+        assert_eq!(
+            error,
+            ValidationError::InvalidConfig(
+                "stream_defaults.preview_fps must be between 1 and 30".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn effective_preview_fps_prefers_panel_override() {
+        let mut panel = default_panel_config(0, 0);
+        let defaults = StreamDefaults {
+            preview_fps: 12,
+            auto_manage_preview_fps: false,
+        };
+        assert_eq!(effective_preview_fps(&panel, &defaults, 1), 12);
+
+        panel.advanced.preview_fps_override = Some(7);
+        assert_eq!(effective_preview_fps(&panel, &defaults, 8), 7);
+    }
+
+    #[test]
+    fn managed_preview_fps_scales_from_active_streams() {
+        let defaults = StreamDefaults {
+            preview_fps: 12,
+            auto_manage_preview_fps: true,
+        };
+
+        assert_eq!(managed_preview_fps(&defaults, 1), 12);
+        assert_eq!(managed_preview_fps(&defaults, 4), 12);
+        assert_eq!(managed_preview_fps(&defaults, 5), 10);
+        assert_eq!(managed_preview_fps(&defaults, 8), 6);
+    }
+
+    #[test]
+    fn legacy_config_deserializes_with_default_stream_settings() {
+        let parsed: AppConfig = serde_json::from_str(
+            r#"{
+                "schema_version": 2,
+                "screens": [],
+                "ui_state": {
+                    "active_screen": 0,
+                    "active_panel_per_screen": [],
+                    "fullscreen": false
+                }
+            }"#,
+        )
+        .expect("legacy config should deserialize");
+
+        assert_eq!(parsed.stream_defaults.preview_fps, DEFAULT_PREVIEW_FPS);
+        assert!(!parsed.stream_defaults.auto_manage_preview_fps);
+        assert!(parsed.saved_secrets.is_empty());
     }
 
     #[test]

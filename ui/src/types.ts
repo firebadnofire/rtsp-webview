@@ -14,6 +14,16 @@ export interface AutoPopulateTool {
   sub_num_end: number
 }
 
+export interface StreamDefaults {
+  preview_fps: number
+  auto_manage_preview_fps: boolean
+}
+
+export interface StreamDefaultsPatch {
+  preview_fps?: number
+  auto_manage_preview_fps?: boolean
+}
+
 export interface AdvancedConfig {
   connection_timeout_ms: number
   stall_timeout_ms: number
@@ -21,6 +31,7 @@ export interface AdvancedConfig {
   retry_max_ms: number
   retry_jitter_ms: number
   max_failures: number
+  preview_fps_override: number | null
 }
 
 export interface AdvancedConfigPatch {
@@ -30,6 +41,7 @@ export interface AdvancedConfigPatch {
   retry_max_ms?: number
   retry_jitter_ms?: number
   max_failures?: number
+  preview_fps_override?: number | null
 }
 
 export interface SecretRef {
@@ -91,6 +103,7 @@ export interface GetStateResponse {
   fullscreen: boolean
   screens: ScreenStateView[]
   auto_populate_tool: AutoPopulateTool
+  stream_defaults: StreamDefaults
 }
 
 export interface PanelStatusEvent {
@@ -175,7 +188,16 @@ export interface SettingsModalState {
     retryMaxMs: string
     retryJitterMs: string
     maxFailures: string
+    previewFpsOverrideEnabled: boolean
+    previewFpsOverride: string
     clearSecret: boolean
+  }
+}
+
+export interface AppSettingsModalState {
+  form: {
+    previewFps: string
+    autoManagePreviewFps: boolean
   }
 }
 

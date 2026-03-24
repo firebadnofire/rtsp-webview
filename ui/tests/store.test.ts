@@ -76,6 +76,112 @@ describe('store', () => {
     expect(snapshot.data?.screens[0].panels[1].status.state).toBe('playing')
   })
 
+  it('clears stale frame state when a panel reconnects', () => {
+    const store = new UiStore()
+    store.setData(makeState(1))
+    store.applyPanelFrame({
+      ipc_version: '1',
+      screen_id: 0,
+      panel_id: 0,
+      mime: 'image/jpeg',
+      data_base64: 'old',
+      width: 1,
+      height: 1,
+      pts_ms: 10,
+      seq: 100
+    })
+    store.applyPanelStatus({
+      ipc_version: '1',
+      screen_id: 0,
+      panel_id: 0,
+      state: 'connecting',
+      message: 'Connecting',
+      code: null
+    })
+    store.applyPanelFrame({
+      ipc_version: '1',
+      screen_id: 0,
+      panel_id: 0,
+      mime: 'image/jpeg',
+      data_base64: 'new',
+      width: 1,
+      height: 1,
+      pts_ms: 11,
+      seq: 1
+    })
+
+    const snapshot = store.snapshot()
+    expect(snapshot.frames[panelKey(0, 0)].data_base64).toBe('new')
+  })
+
+  it('tracks measured frame fps from recent frame timing', () => {
+    const store = new UiStore()
+    store.setData(makeState(1))
+    store.applyPanelFrame({
+      ipc_version: '1',
+      screen_id: 0,
+      panel_id: 0,
+      mime: 'image/jpeg',
+      data_base64: 'a',
+      width: 1,
+      height: 1,
+      pts_ms: 0,
+      seq: 1
+    })
+    store.applyPanelFrame({
+      ipc_version: '1',
+      screen_id: 0,
+      panel_id: 0,
+      mime: 'image/jpeg',
+      data_base64: 'b',
+      width: 1,
+      height: 1,
+      pts_ms: 100,
+      seq: 2
+    })
+
+    expect(store.frameFps(0, 0)).toBe(10)
+    expect(store.frameFpsLabel(0, 0)).toBe('10 FPS')
+  })
+
+  it('clears measured fps when a panel stops retrying or disconnects', () => {
+    const store = new UiStore()
+    store.setData(makeState(1))
+    store.applyPanelFrame({
+      ipc_version: '1',
+      screen_id: 0,
+      panel_id: 0,
+      mime: 'image/jpeg',
+      data_base64: 'a',
+      width: 1,
+      height: 1,
+      pts_ms: 0,
+      seq: 1
+    })
+    store.applyPanelFrame({
+      ipc_version: '1',
+      screen_id: 0,
+      panel_id: 0,
+      mime: 'image/jpeg',
+      data_base64: 'b',
+      width: 1,
+      height: 1,
+      pts_ms: 100,
+      seq: 2
+    })
+    store.applyPanelStatus({
+      ipc_version: '1',
+      screen_id: 0,
+      panel_id: 0,
+      state: 'retrying',
+      message: 'Retrying',
+      code: null
+    })
+
+    expect(store.frameFps(0, 0)).toBeNull()
+    expect(store.frameFpsLabel(0, 0)).toBe('-- FPS')
+  })
+
   it('resolves auto-populate template values and masks password', () => {
     const state = makeState(1)
     state.auto_populate_tool.base_url_template =

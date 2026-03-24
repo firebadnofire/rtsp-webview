@@ -1,11 +1,12 @@
 import { invoke } from '@tauri-apps/api/tauri'
-import type { AutoPopulateTool, GetStateResponse, PanelConfigPatch } from './types'
+import type { AutoPopulateTool, GetStateResponse, PanelConfigPatch, StreamDefaultsPatch } from './types'
 
 export interface IpcClient {
   setActiveScreen(screenId: number): Promise<void>
   setActivePanel(screenId: number, panelId: number): Promise<void>
   getState(): Promise<GetStateResponse>
   updatePanelConfig(screenId: number, panelId: number, patch: PanelConfigPatch): Promise<void>
+  updateStreamDefaults(patch: StreamDefaultsPatch): Promise<void>
   setPanelSecret(screenId: number, panelId: number, username: string, password: string): Promise<void>
   autoPopulateCameras(tool: AutoPopulateTool): Promise<void>
   startStream(screenId: number, panelId: number): Promise<void>
@@ -16,6 +17,7 @@ export interface IpcClient {
   stopAllGlobal(): Promise<void>
   saveConfig(path: string | null): Promise<string>
   loadConfig(path: string | null): Promise<string>
+  loadStartupConfig(): Promise<string | null>
   snapshot(screenId: number, panelId: number, path: string | null): Promise<string>
   toggleRecording(screenId: number, panelId: number, path: string | null): Promise<string | null>
   toggleFullscreen(enabled: boolean): Promise<void>
@@ -35,6 +37,9 @@ export const tauriIpcClient: IpcClient = {
   },
   updatePanelConfig(screenId, panelId, patch) {
     return invoke('update_panel_config', { screenId, panelId, patch })
+  },
+  updateStreamDefaults(patch) {
+    return invoke('update_stream_defaults', { patch })
   },
   setPanelSecret(screenId, panelId, username, password) {
     return invoke('set_panel_secret', { screenId, panelId, username, password })
@@ -65,6 +70,9 @@ export const tauriIpcClient: IpcClient = {
   },
   loadConfig(path) {
     return invoke<string>('load_config', { path })
+  },
+  loadStartupConfig() {
+    return invoke<string | null>('load_startup_config')
   },
   snapshot(screenId, panelId, path) {
     return invoke<string>('snapshot', { screenId, panelId, path })

@@ -21,7 +21,8 @@ const makePanel = (screenId: number, panelId: number, state: PanelState = 'idle'
       retry_base_ms: 500,
       retry_max_ms: 10000,
       retry_jitter_ms: 250,
-      max_failures: 30
+      max_failures: 30,
+      preview_fps_override: null
     }
   },
   status: {
@@ -39,6 +40,10 @@ export const makeState = (screenCount = 4): GetStateResponse => ({
   active_screen: 0,
   active_panel_per_screen: Array.from({ length: screenCount }, () => 0),
   fullscreen: false,
+  stream_defaults: {
+    preview_fps: 12,
+    auto_manage_preview_fps: false
+  },
   auto_populate_tool: {
     base_url_template:
       'rtsp://$USERNAME:$PASSWORD@$IP:$PORT/cam/realmonitor?channel=$cameraNum&subtype=$subNum',

@@ -16,9 +16,14 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 const READ_TIMEOUT: Duration = Duration::from_secs(6);
+const INITIAL_READ_TIMEOUT: Duration = Duration::from_secs(15);
 const RECONNECT_DELAY: Duration = Duration::from_millis(600);
 const MAX_PENDING_BYTES: usize = 2 * 1024 * 1024;
 const STATUS_MESSAGE_MAX_LEN: usize = 280;
+const STARTUP_KEYFRAME_MESSAGE: &str = "Waiting for initial keyframe";
+const PREVIEW_MAX_WIDTH: u32 = 2560;
+const PREVIEW_MAX_HEIGHT: u32 = 1440;
+const PREVIEW_JPEG_QUALITY: u8 = 4;
 
 pub async fn ensure_started(
     app: AppHandle,
@@ -93,11 +98,6 @@ async fn run_loop(
     key: PanelKey,
     cancel: CancellationToken,
 ) -> Result<(), CommandError> {
-    sleep(Duration::from_millis(250)).await;
-    if cancel.is_cancelled() {
-        return Ok(());
-    }
-
     set_status(
         &app,
         managed.clone(),
@@ -178,7 +178,11 @@ async fn stream_rtsp_session(
     frame_seq: &mut u64,
     is_playing: &mut bool,
 ) -> Result<(), CommandError> {
-    let (mut child, mut stdout, stderr_task) = spawn_ffmpeg_process(rtsp_url)?;
+    let preview_fps = {
+        let runtime = managed.inner.runtime.read().await;
+        runtime.effective_preview_fps_for_key(key)?
+    };
+    let (mut child, mut stdout, stderr_task) = spawn_ffmpeg_process(rtsp_url, preview_fps)?;
     let mut read_buffer = [0u8; 8192];
     let mut pending = Vec::with_capacity(128 * 1024);
 
@@ -190,7 +194,7 @@ async fn stream_rtsp_session(
                 let _ = collect_stderr(stderr_task).await;
                 return Ok(());
             }
-            result = timeout(READ_TIMEOUT, stdout.read(&mut read_buffer)) => result,
+            result = timeout(read_timeout_for_stream(*is_playing), stdout.read(&mut read_buffer)) => result,
         };
 
         let read_count = match read_result {
@@ -201,10 +205,11 @@ async fn stream_rtsp_session(
                 terminate_child(&mut child).await;
                 let exit_code = wait_for_exit_code(&mut child).await;
                 let stderr = collect_stderr(stderr_task).await;
-                return Err(CommandError::decode(format_ffmpeg_error(
+                return Err(CommandError::decode(format_stream_error(
                     exit_code,
                     &stderr,
-                    "ffmpeg frame read timed out",
+                    "ffmpeg did not produce a frame in time",
+                    *is_playing,
                 )));
             }
         };
@@ -212,10 +217,11 @@ async fn stream_rtsp_session(
         if read_count == 0 {
             let exit_code = wait_for_exit_code(&mut child).await;
             let stderr = collect_stderr(stderr_task).await;
-            return Err(CommandError::decode(format_ffmpeg_error(
+            return Err(CommandError::decode(format_stream_error(
                 exit_code,
                 &stderr,
-                "ffmpeg stream ended unexpectedly",
+                "ffmpeg stream ended before producing a frame",
+                *is_playing,
             )));
         }
 
@@ -239,29 +245,36 @@ async fn stream_rtsp_session(
 
 fn spawn_ffmpeg_process(
     rtsp_url: &str,
+    preview_fps: u8,
 ) -> Result<(Child, ChildStdout, JoinHandle<String>), CommandError> {
+    let preview_filter = build_preview_filter(preview_fps);
+    let jpeg_quality = PREVIEW_JPEG_QUALITY;
     let mut child = Command::new("ffmpeg")
         .arg("-nostdin")
         .arg("-v")
         .arg("error")
         .arg("-rtsp_transport")
         .arg("tcp")
+        .arg("-rtsp_flags")
+        .arg("prefer_tcp")
         .arg("-timeout")
         .arg("3000000")
+        .arg("-analyzeduration")
+        .arg("0")
+        .arg("-probesize")
+        .arg("32768")
         .arg("-fflags")
-        .arg("nobuffer")
-        .arg("-flags")
-        .arg("low_delay")
+        .arg("discardcorrupt")
         .arg("-i")
         .arg(rtsp_url)
         .arg("-f")
         .arg("image2pipe")
         .arg("-vf")
-        .arg("fps=5")
+        .arg(preview_filter)
         .arg("-vcodec")
         .arg("mjpeg")
         .arg("-q:v")
-        .arg("5")
+        .arg(jpeg_quality.to_string())
         .arg("-")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -287,6 +300,14 @@ fn spawn_ffmpeg_process(
     Ok((child, stdout, stderr_task))
 }
 
+fn build_preview_filter(preview_fps: u8) -> String {
+    format!(
+        "fps={preview_fps},scale=w='min({max_width},iw)':h='min({max_height},ih)':force_original_aspect_ratio=decrease:flags=fast_bilinear",
+        max_width = PREVIEW_MAX_WIDTH,
+        max_height = PREVIEW_MAX_HEIGHT,
+    )
+}
+
 async fn terminate_child(child: &mut Child) {
     if child.try_wait().ok().flatten().is_none() {
         let _ = child.start_kill();
@@ -302,6 +323,27 @@ async fn wait_for_exit_code(child: &mut Child) -> Option<i32> {
 
 async fn collect_stderr(task: JoinHandle<String>) -> String {
     task.await.unwrap_or_default()
+}
+
+fn read_timeout_for_stream(is_playing: bool) -> Duration {
+    if is_playing {
+        READ_TIMEOUT
+    } else {
+        INITIAL_READ_TIMEOUT
+    }
+}
+
+fn format_stream_error(
+    exit_code: Option<i32>,
+    stderr: &str,
+    fallback: &str,
+    is_playing: bool,
+) -> String {
+    if !is_playing && is_transient_h264_startup_error(stderr) {
+        return STARTUP_KEYFRAME_MESSAGE.to_string();
+    }
+
+    format_ffmpeg_error(exit_code, stderr, fallback)
 }
 
 fn format_ffmpeg_error(exit_code: Option<i32>, stderr: &str, fallback: &str) -> String {
@@ -328,6 +370,17 @@ fn truncate_status(value: &str) -> String {
         .collect::<String>();
     output.push_str("...");
     output
+}
+
+fn is_transient_h264_startup_error(stderr: &str) -> bool {
+    let normalized = stderr.to_ascii_lowercase();
+    normalized.contains("co located pocs unavailable")
+        || normalized.contains("mmco: unref short failure")
+        || normalized.contains("reference picture missing during reorder")
+        || normalized.contains("missing picture in access unit")
+        || normalized.contains("decode_slice_header error")
+        || normalized.contains("non-existing pps 0 referenced")
+        || normalized.contains("no frame!")
 }
 
 async fn sleep_or_cancel(cancel: &CancellationToken, duration: Duration) -> bool {
@@ -403,25 +456,32 @@ async fn emit_frame(
     frame_seq: &mut u64,
     is_playing: &mut bool,
 ) -> Result<(), CommandError> {
-    *frame_seq = frame_seq.saturating_add(1);
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
+    if *frame_seq >= now_ms {
+        *frame_seq = frame_seq.saturating_add(1);
+    } else {
+        *frame_seq = now_ms;
+    }
     let frame_base64 = STANDARD.encode(frame_bytes);
-
-    {
+    let cached_frame = FrameCache {
+        mime: "image/jpeg".to_string(),
+        data_base64: frame_base64.clone(),
+        width: None,
+        height: None,
+        pts_ms: Some(now_ms),
+        seq: *frame_seq,
+    };
+    let should_emit = {
         let mut runtime = managed.inner.runtime.write().await;
         if !runtime.panel_exists(key) {
             return Ok(());
         }
-        runtime.set_latest_frame(
-            key,
-            FrameCache {
-                data_base64: frame_base64.clone(),
-            },
-        )?;
-    }
+        runtime.set_latest_frame(key, cached_frame.clone())?;
+        key.screen_id == runtime.active_screen
+    };
 
     if !*is_playing {
         set_status(
@@ -436,20 +496,24 @@ async fn emit_frame(
         *is_playing = true;
     }
 
-    events::emit_panel_frame(
-        app,
-        PanelFrameEvent {
-            ipc_version: IPC_VERSION.to_string(),
-            screen_id: key.screen_id,
-            panel_id: key.panel_id,
-            mime: "image/jpeg".to_string(),
-            data_base64: frame_base64,
-            width: None,
-            height: None,
-            pts_ms: Some(now_ms),
-            seq: *frame_seq,
-        },
-    )
+    if should_emit {
+        events::emit_panel_frame(
+            app,
+            PanelFrameEvent {
+                ipc_version: IPC_VERSION.to_string(),
+                screen_id: key.screen_id,
+                panel_id: key.panel_id,
+                mime: cached_frame.mime,
+                data_base64: frame_base64,
+                width: cached_frame.width,
+                height: cached_frame.height,
+                pts_ms: cached_frame.pts_ms,
+                seq: cached_frame.seq,
+            },
+        )?;
+    }
+
+    Ok(())
 }
 
 fn extract_jpeg_frame(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
@@ -509,4 +573,49 @@ async fn set_status(
             code,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_reads_allow_more_time_than_steady_state() {
+        assert_eq!(read_timeout_for_stream(false), INITIAL_READ_TIMEOUT);
+        assert_eq!(read_timeout_for_stream(true), READ_TIMEOUT);
+    }
+
+    #[test]
+    fn transient_h264_startup_errors_are_normalized() {
+        let stderr =
+            "[h264 @ 0x1] co located POCs unavailable [h264 @ 0x2] mmco: unref short failure";
+        assert_eq!(
+            format_stream_error(None, stderr, "ffmpeg failed", false),
+            STARTUP_KEYFRAME_MESSAGE
+        );
+    }
+
+    #[test]
+    fn authentication_errors_keep_original_detail() {
+        let message = format_stream_error(
+            None,
+            "Server returned 401 Unauthorized (authorization failed)",
+            "ffmpeg failed",
+            false,
+        );
+        assert_eq!(
+            message,
+            "ffmpeg: Server returned 401 Unauthorized (authorization failed)"
+        );
+    }
+
+    #[test]
+    fn preview_filter_uses_single_fullscreen_cap_for_all_layouts() {
+        let filter = build_preview_filter(7);
+        assert_eq!(
+            filter,
+            "fps=7,scale=w='min(2560,iw)':h='min(1440,ih)':force_original_aspect_ratio=decrease:flags=fast_bilinear"
+        );
+        assert_eq!(PREVIEW_JPEG_QUALITY, 4);
+    }
 }

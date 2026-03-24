@@ -1,6 +1,6 @@
 use crate::app_state::ManagedState;
 use crate::errors::CommandError;
-use crate::state::{PanelKey, PanelSecret};
+use crate::state::{AppRuntimeState, FrameCache, PanelKey, PanelSecret};
 use crate::{events, stub_streams};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -9,8 +9,9 @@ use percent_encoding::percent_decode_str;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use rtsp_core::{
     validate_auto_populate_tool, AppConfig, AutoPopulateTool, ConfigLoadedEvent, GetStateResponse,
-    PanelConfigPatch, PanelRuntimeStatus, PanelState, PanelStatusEvent, SnapshotFailedEvent,
-    SnapshotSavedEvent, IPC_VERSION, MAX_SCREEN_COUNT, PANELS_PER_SCREEN,
+    PanelConfigPatch, PanelFrameEvent, PanelRuntimeStatus, PanelState, PanelStatusEvent,
+    SavedSecret, SnapshotFailedEvent, SnapshotSavedEvent, StreamDefaultsPatch, IPC_VERSION,
+    MAX_SCREEN_COUNT, PANELS_PER_SCREEN,
 };
 use rtsp_secrets::SecretPayload;
 use std::fs::File;
@@ -18,8 +19,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, collections::HashSet};
 use tauri::api::dialog::blocking::FileDialogBuilder;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 use url::Url;
+
+const DEFAULT_CONFIG_FILE_NAME: &str = "rtsp_viewer_config.json";
 
 fn resolve_save_path(path: Option<String>, default_name: &str) -> Result<PathBuf, CommandError> {
     if let Some(path) = path {
@@ -40,6 +43,35 @@ fn resolve_open_path(path: Option<String>) -> Result<PathBuf, CommandError> {
     FileDialogBuilder::new()
         .pick_file()
         .ok_or_else(|| CommandError::io("open was canceled"))
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|candidate| candidate == &path) {
+        paths.push(path);
+    }
+}
+
+fn resolve_startup_config_path() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        push_unique_path(&mut candidates, current_dir.join(DEFAULT_CONFIG_FILE_NAME));
+    }
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            push_unique_path(&mut candidates, parent.join(DEFAULT_CONFIG_FILE_NAME));
+        }
+    }
+
+    if cfg!(debug_assertions) {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        if let Some(repo_root) = manifest_dir.parent() {
+            push_unique_path(&mut candidates, repo_root.join(DEFAULT_CONFIG_FILE_NAME));
+        }
+    }
+
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 fn atomic_write(path: &Path, content: &[u8]) -> Result<(), CommandError> {
@@ -222,32 +254,99 @@ fn apply_secret_updates(
     Ok(())
 }
 
-fn load_secrets_for_config(
-    state: &ManagedState,
-    config: &AppConfig,
-) -> Result<HashMap<String, PanelSecret>, CommandError> {
-    let mut map = HashMap::new();
-    for (screen_idx, _) in config.screens.iter().enumerate() {
-        for panel_idx in 0..PANELS_PER_SCREEN {
-            let key = rtsp_core::secret_key_for(screen_idx as u32, panel_idx as u8);
-            if map.contains_key(&key) {
+fn collect_saved_secrets(runtime: &AppRuntimeState) -> HashMap<String, SavedSecret> {
+    let mut saved = HashMap::new();
+    for screen in &runtime.screens {
+        for panel in &screen.panels {
+            let Some(secret) = panel.secret.as_ref() else {
+                continue;
+            };
+            if !secret.is_present() {
                 continue;
             }
-            if let Some(payload) = state.inner.secret_store.get(&key)? {
-                if payload.username.trim().is_empty() && payload.password.trim().is_empty() {
-                    continue;
-                }
-                map.insert(
-                    key,
-                    PanelSecret {
-                        username: payload.username,
-                        password: payload.password,
-                    },
-                );
+            saved.insert(
+                panel.config.secret_ref.key.clone(),
+                SavedSecret {
+                    username: secret.username.clone(),
+                    password: secret.password.clone(),
+                },
+            );
+        }
+    }
+    saved
+}
+
+fn collect_existing_secret_keys(runtime: &AppRuntimeState) -> HashSet<String> {
+    let mut keys = HashSet::new();
+    for screen in &runtime.screens {
+        for panel in &screen.panels {
+            if panel.secret.as_ref().is_some_and(PanelSecret::is_present) {
+                keys.insert(panel.config.secret_ref.key.clone());
             }
         }
     }
+    keys
+}
+
+fn resolve_config_secrets(
+    config: &AppConfig,
+) -> Result<HashMap<String, Option<PanelSecret>>, CommandError> {
+    let mut map = HashMap::new();
+    for (screen_idx, screen) in config.screens.iter().enumerate() {
+        for panel_idx in 0..PANELS_PER_SCREEN {
+            let panel = &screen.panels[panel_idx];
+            let key = rtsp_core::secret_key_for(screen_idx as u32, panel_idx as u8);
+            if let Some(saved) = config.saved_secrets.get(&key) {
+                if saved.username.trim().is_empty() && saved.password.trim().is_empty() {
+                    map.insert(key, None);
+                } else {
+                    map.insert(
+                        key,
+                        Some(PanelSecret {
+                            username: saved.username.clone(),
+                            password: saved.password.clone(),
+                        }),
+                    );
+                }
+                continue;
+            }
+            map.insert(key, fallback_auto_populate_secret(config, panel)?);
+        }
+    }
     Ok(map)
+}
+
+fn fallback_auto_populate_secret(
+    config: &AppConfig,
+    panel: &rtsp_core::PanelConfig,
+) -> Result<Option<PanelSecret>, CommandError> {
+    if config.auto_populate_tool.username.trim().is_empty()
+        && config.auto_populate_tool.password.trim().is_empty()
+    {
+        return Ok(None);
+    }
+
+    let Some(camera_num) = panel.camera_num else {
+        return Ok(None);
+    };
+    let sub_num = panel
+        .sub_num
+        .unwrap_or(config.auto_populate_tool.sub_num_start);
+    let resolved = resolve_auto_populated_url(&config.auto_populate_tool, camera_num, sub_num);
+    let parsed = parse_rtsp_url(&resolved)?;
+
+    if parsed.host != panel.host || parsed.port != panel.port || parsed.path != panel.path {
+        return Ok(None);
+    }
+
+    if parsed.username.trim().is_empty() && parsed.password.trim().is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(PanelSecret {
+        username: parsed.username,
+        password: parsed.password,
+    }))
 }
 
 async fn start_panel(
@@ -279,14 +378,21 @@ async fn start_panel(
 
         if matches!(
             panel.status.state,
-            PanelState::Playing | PanelState::Connecting
+            PanelState::Playing | PanelState::Connecting | PanelState::Retrying
         ) {
             return Ok(());
         }
 
+        panel.latest_frame = None;
         panel.status.state = PanelState::Connecting;
         panel.status.message = "Connecting".to_string();
         panel.status.code = None;
+    }
+
+    {
+        let mut runtime = managed.inner.runtime.write().await;
+        let planned_fps = runtime.effective_preview_fps_for_key(key)?;
+        runtime.set_preview_fps_in_use(key, Some(planned_fps))?;
     }
 
     events::emit_panel_status(
@@ -301,7 +407,7 @@ async fn start_panel(
         },
     )?;
 
-    stub_streams::ensure_started(app.clone(), managed, key).await?;
+    stub_streams::ensure_started(app.clone(), managed.clone(), key).await?;
     Ok(())
 }
 
@@ -315,9 +421,17 @@ async fn stop_panel(
         let mut runtime = managed.inner.runtime.write().await;
         if runtime.panel_exists(key) {
             runtime.set_recording(key, false)?;
+            runtime.clear_latest_frame(key)?;
         }
     }
-    stub_streams::stop_stream(app.clone(), managed, key, emit_status).await
+    stub_streams::stop_stream(app.clone(), managed.clone(), key, emit_status).await?;
+    {
+        let mut runtime = managed.inner.runtime.write().await;
+        if runtime.panel_exists(key) {
+            runtime.set_preview_fps_in_use(key, None)?;
+        }
+    }
+    Ok(())
 }
 
 async fn restart_panel(
@@ -329,6 +443,112 @@ async fn restart_panel(
     start_panel(app, managed, key).await
 }
 
+async fn rebalance_active_preview_fps(
+    app: &AppHandle,
+    managed: ManagedState,
+    exclude: Option<PanelKey>,
+) -> Result<(), CommandError> {
+    let keys = {
+        let runtime = managed.inner.runtime.read().await;
+        runtime.preview_fps_rebalance_keys(exclude)?
+    };
+
+    for key in keys {
+        restart_panel(app, managed.clone(), key).await?;
+    }
+
+    Ok(())
+}
+
+fn emit_cached_frame(
+    app: &AppHandle,
+    key: PanelKey,
+    frame: FrameCache,
+) -> Result<(), CommandError> {
+    events::emit_panel_frame(
+        app,
+        PanelFrameEvent {
+            ipc_version: IPC_VERSION.to_string(),
+            screen_id: key.screen_id,
+            panel_id: key.panel_id,
+            mime: frame.mime,
+            data_base64: frame.data_base64,
+            width: frame.width,
+            height: frame.height,
+            pts_ms: frame.pts_ms,
+            seq: frame.seq,
+        },
+    )
+}
+
+async fn emit_cached_frames_for_screen(
+    app: &AppHandle,
+    managed: ManagedState,
+    screen_id: u32,
+) -> Result<(), CommandError> {
+    let frames = {
+        let runtime = managed.inner.runtime.read().await;
+        runtime.latest_frames_for_screen(screen_id)?
+    };
+
+    for (key, frame) in frames {
+        emit_cached_frame(app, key, frame)?;
+    }
+
+    Ok(())
+}
+
+async fn load_config_from_path(
+    app: &AppHandle,
+    managed: ManagedState,
+    selected_path: PathBuf,
+) -> Result<String, CommandError> {
+    let content = tokio::fs::read_to_string(&selected_path).await?;
+    let parsed: AppConfig = serde_json::from_str(&content)
+        .map_err(|error| CommandError::config(format!("invalid config json: {}", error)))?;
+    let desired_secrets = resolve_config_secrets(&parsed)?;
+    let external_secrets = desired_secrets
+        .iter()
+        .filter_map(|(key, secret)| secret.clone().map(|secret| (key.clone(), secret)))
+        .collect::<HashMap<_, _>>();
+    let existing_secret_keys = {
+        let runtime = managed.inner.runtime.read().await;
+        collect_existing_secret_keys(&runtime)
+    };
+
+    let outcome = {
+        let mut runtime = managed.inner.runtime.write().await;
+        runtime.merge_loaded_config(parsed, external_secrets)?
+    };
+
+    apply_secret_updates(&managed, desired_secrets, existing_secret_keys)?;
+
+    for key in &outcome.stop_keys {
+        let _ = stop_panel(app, managed.clone(), *key, false).await;
+    }
+
+    for key in &outcome.restart_keys {
+        let _ = start_panel(app, managed.clone(), *key).await;
+    }
+
+    rebalance_active_preview_fps(app, managed.clone(), None).await?;
+
+    let snapshot = {
+        let runtime = managed.inner.runtime.read().await;
+        runtime.snapshot()
+    };
+
+    events::emit_config_loaded(
+        app,
+        ConfigLoadedEvent {
+            ipc_version: IPC_VERSION.to_string(),
+            state: snapshot,
+        },
+    )?;
+
+    Ok(selected_path.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub async fn get_state(state: State<'_, ManagedState>) -> Result<GetStateResponse, CommandError> {
     let runtime = state.inner.runtime.read().await;
@@ -337,21 +557,31 @@ pub async fn get_state(state: State<'_, ManagedState>) -> Result<GetStateRespons
 
 #[tauri::command]
 pub async fn set_active_screen(
+    app: AppHandle,
     state: State<'_, ManagedState>,
     screen_id: u32,
 ) -> Result<(), CommandError> {
-    let mut runtime = state.inner.runtime.write().await;
-    runtime.set_active_screen(screen_id)
+    {
+        let mut runtime = state.inner.runtime.write().await;
+        runtime.set_active_screen(screen_id)?;
+    }
+
+    rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
+    emit_cached_frames_for_screen(&app, state.inner().clone(), screen_id).await
 }
 
 #[tauri::command]
 pub async fn set_active_panel(
+    app: AppHandle,
     state: State<'_, ManagedState>,
     screen_id: u32,
     panel_id: u8,
 ) -> Result<(), CommandError> {
-    let mut runtime = state.inner.runtime.write().await;
-    runtime.set_active_panel(screen_id, panel_id)
+    {
+        let mut runtime = state.inner.runtime.write().await;
+        runtime.set_active_panel(screen_id, panel_id)?;
+    }
+    rebalance_active_preview_fps(&app, state.inner().clone(), None).await
 }
 
 #[tauri::command]
@@ -371,7 +601,25 @@ pub async fn update_panel_config(
         runtime.update_panel_config(key, patch)?
     };
 
-    if outcome.was_playing && outcome.tuple_changed {
+    if outcome.was_playing && outcome.restart_required {
+        restart_panel(&app, state.inner().clone(), key).await?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_stream_defaults(
+    app: AppHandle,
+    state: State<'_, ManagedState>,
+    patch: StreamDefaultsPatch,
+) -> Result<(), CommandError> {
+    let outcome = {
+        let mut runtime = state.inner.runtime.write().await;
+        runtime.update_stream_defaults(patch)?
+    };
+
+    for key in outcome.restart_keys {
         restart_panel(&app, state.inner().clone(), key).await?;
     }
 
@@ -534,6 +782,15 @@ pub async fn start_stream(
             panel_id,
         },
     )
+    .await?;
+    rebalance_active_preview_fps(
+        &app,
+        state.inner().clone(),
+        Some(PanelKey {
+            screen_id,
+            panel_id,
+        }),
+    )
     .await
 }
 
@@ -553,7 +810,8 @@ pub async fn stop_stream(
         },
         true,
     )
-    .await
+    .await?;
+    rebalance_active_preview_fps(&app, state.inner().clone(), None).await
 }
 
 #[tauri::command]
@@ -579,6 +837,7 @@ pub async fn start_screen(
             }
         }
     }
+    rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
     if let Some(error) = first_error {
         return Err(error);
     }
@@ -603,6 +862,7 @@ pub async fn stop_screen(
         )
         .await?;
     }
+    rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
     Ok(())
 }
 
@@ -637,6 +897,7 @@ pub async fn start_all_global(
         return Err(error);
     }
 
+    rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
     Ok(())
 }
 
@@ -660,6 +921,7 @@ pub async fn stop_all_global(
             .await?;
         }
     }
+    rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
     Ok(())
 }
 
@@ -668,10 +930,12 @@ pub async fn save_config(
     state: State<'_, ManagedState>,
     path: Option<String>,
 ) -> Result<String, CommandError> {
-    let selected_path = resolve_save_path(path, "rtsp_viewer_config.json")?;
+    let selected_path = resolve_save_path(path, DEFAULT_CONFIG_FILE_NAME)?;
     let config = {
         let runtime = state.inner.runtime.read().await;
-        runtime.to_app_config()
+        let mut config = runtime.to_app_config();
+        config.saved_secrets = collect_saved_secrets(&runtime);
+        config
     };
     let serialized =
         serde_json::to_vec_pretty(&config).map_err(|error| CommandError::io(error.to_string()))?;
@@ -686,38 +950,20 @@ pub async fn load_config(
     path: Option<String>,
 ) -> Result<String, CommandError> {
     let selected_path = resolve_open_path(path)?;
-    let content = tokio::fs::read_to_string(&selected_path).await?;
-    let parsed: AppConfig = serde_json::from_str(&content)
-        .map_err(|error| CommandError::config(format!("invalid config json: {}", error)))?;
-    let external_secrets = load_secrets_for_config(state.inner(), &parsed)?;
+    load_config_from_path(&app, state.inner().clone(), selected_path).await
+}
 
-    let outcome = {
-        let mut runtime = state.inner.runtime.write().await;
-        runtime.merge_loaded_config(parsed, external_secrets)?
+#[tauri::command]
+pub async fn load_startup_config(
+    app: AppHandle,
+    state: State<'_, ManagedState>,
+) -> Result<Option<String>, CommandError> {
+    let Some(path) = resolve_startup_config_path() else {
+        return Ok(None);
     };
 
-    for key in &outcome.stop_keys {
-        let _ = stop_panel(&app, state.inner().clone(), *key, false).await;
-    }
-
-    for key in &outcome.restart_keys {
-        let _ = start_panel(&app, state.inner().clone(), *key).await;
-    }
-
-    let snapshot = {
-        let runtime = state.inner.runtime.read().await;
-        runtime.snapshot()
-    };
-
-    events::emit_config_loaded(
-        &app,
-        ConfigLoadedEvent {
-            ipc_version: IPC_VERSION.to_string(),
-            state: snapshot,
-        },
-    )?;
-
-    Ok(selected_path.to_string_lossy().to_string())
+    let loaded = load_config_from_path(&app, state.inner().clone(), path).await?;
+    Ok(Some(loaded))
 }
 
 #[tauri::command]
@@ -826,21 +1072,14 @@ pub async fn toggle_recording(
 
 #[tauri::command]
 pub async fn toggle_fullscreen(
-    app: AppHandle,
     state: State<'_, ManagedState>,
     enabled: bool,
 ) -> Result<(), CommandError> {
-    {
-        let mut runtime = state.inner.runtime.write().await;
-        runtime.fullscreen = enabled;
+    let mut runtime = state.inner.runtime.write().await;
+    if runtime.fullscreen == enabled {
+        return Ok(());
     }
-
-    if let Some(window) = app.get_window("main") {
-        window
-            .set_fullscreen(enabled)
-            .map_err(|error| CommandError::io(error.to_string()))?;
-    }
-
+    runtime.fullscreen = enabled;
     Ok(())
 }
 
@@ -887,18 +1126,20 @@ pub async fn delete_screen(
         let _ = start_panel(&app, state.inner().clone(), key).await;
     }
 
+    rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_secret_updates, atomic_write, build_auto_populate_assignments,
-        resolve_auto_populated_url,
+        apply_secret_updates, atomic_write, build_auto_populate_assignments, collect_saved_secrets,
+        resolve_auto_populated_url, resolve_config_secrets,
     };
     use crate::app_state::ManagedState;
-    use crate::state::PanelSecret;
-    use rtsp_core::{AutoPopulateTool, PANELS_PER_SCREEN};
+    use crate::state::{AppRuntimeState, PanelSecret};
+    use rtsp_core::{default_app_config, AutoPopulateTool, SavedSecret, PANELS_PER_SCREEN};
     use rtsp_secrets::{SecretError, SecretPayload, SecretStore};
     use std::collections::{HashMap, HashSet};
     use std::sync::{Arc, Mutex};
@@ -1048,5 +1289,93 @@ mod tests {
         assert_eq!(set_keys, vec!["screen_0_panel_0".to_string()]);
         assert!(delete_keys.contains(&"screen_0_panel_1".to_string()));
         assert!(delete_keys.contains(&"screen_2_panel_3".to_string()));
+    }
+
+    #[test]
+    fn resolve_config_secrets_fall_back_to_auto_populate_credentials() {
+        let mut config = default_app_config(1);
+        config.auto_populate_tool = AutoPopulateTool {
+            base_url_template:
+                "rtsp://$USERNAME:$PASSWORD@$IP:$PORT/cam/realmonitor?channel=$cameraNum&subtype=$subNum"
+                    .to_string(),
+            username: "test".to_string(),
+            password: "testpw3@000".to_string(),
+            ip: "127.0.0.1".to_string(),
+            port: "5554".to_string(),
+            camera_num_start: 1,
+            camera_num_end: 16,
+            sub_num_start: 0,
+            sub_num_end: 1,
+        };
+        config.screens[0].panels[0].host = "127.0.0.1".to_string();
+        config.screens[0].panels[0].port = 5554;
+        config.screens[0].panels[0].path = "cam/realmonitor?channel=1&subtype=0".to_string();
+        config.screens[0].panels[0].camera_num = Some(1);
+        config.screens[0].panels[0].sub_num = Some(0);
+
+        let secrets = resolve_config_secrets(&config).expect("config secrets should resolve");
+        let panel_secret = secrets
+            .get("screen_0_panel_0")
+            .and_then(|secret| secret.as_ref())
+            .expect("fallback secret should be present");
+
+        assert_eq!(panel_secret.username, "test");
+        assert_eq!(panel_secret.password, "testpw3@000");
+    }
+
+    #[test]
+    fn apply_secret_updates_replaces_existing_keyring_values_from_config() {
+        let store = Arc::new(MockSecretStore::default());
+        store
+            .set(
+                "screen_0_panel_0",
+                SecretPayload {
+                    username: "old-user".to_string(),
+                    password: "old-pass".to_string(),
+                },
+            )
+            .expect("seed secret should succeed");
+        let managed = ManagedState::with_secret_store(store.clone());
+
+        let mut config = default_app_config(1);
+        config.saved_secrets.insert(
+            "screen_0_panel_0".to_string(),
+            SavedSecret {
+                username: "new-user".to_string(),
+                password: "new-pass".to_string(),
+            },
+        );
+
+        let desired = resolve_config_secrets(&config).expect("config secrets should resolve");
+        let existing = HashSet::from(["screen_0_panel_0".to_string()]);
+        apply_secret_updates(&managed, desired, existing).expect("secret updates should succeed");
+
+        let payload = store
+            .get("screen_0_panel_0")
+            .expect("get should succeed")
+            .expect("secret should exist");
+        assert_eq!(payload.username, "new-user");
+        assert_eq!(payload.password, "new-pass");
+    }
+
+    #[test]
+    fn collect_saved_secrets_exports_runtime_panel_credentials() {
+        let runtime = AppRuntimeState::from_config(
+            default_app_config(1),
+            HashMap::from([(
+                "screen_0_panel_0".to_string(),
+                PanelSecret {
+                    username: "camera-user".to_string(),
+                    password: "camera-pass".to_string(),
+                },
+            )]),
+        );
+
+        let saved = collect_saved_secrets(&runtime);
+        let secret = saved
+            .get("screen_0_panel_0")
+            .expect("saved secret should be present");
+        assert_eq!(secret.username, "camera-user");
+        assert_eq!(secret.password, "camera-pass");
     }
 }

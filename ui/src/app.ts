@@ -1,8 +1,10 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { tauriEventClient, type EventClient } from './events'
 import { tauriIpcClient, type IpcClient } from './ipc'
+import { renderAppSettingsModal } from './components/app-settings-modal'
 import { renderEmptyWorkspace } from './components/empty-workspace'
 import { renderFullscreenHint } from './components/fullscreen-hint'
+import { renderFullscreenPanel } from './components/fullscreen-panel'
 import { renderGlobalSettingsPage } from './components/global-settings-page'
 import { renderNotifications } from './components/notifications'
 import { renderPanelCard } from './components/panel-card'
@@ -11,6 +13,7 @@ import { renderTabs } from './components/tabs'
 import { renderToolbar } from './components/toolbar'
 import {
   buildRtspPreview,
+  panelKey,
   parseRtspUrl,
   rangeInclusive,
   redactRtspPassword,
@@ -19,6 +22,7 @@ import {
   type UiStoreState
 } from './store'
 import type {
+  AppSettingsModalState,
   AutoPopulateTool,
   AutoPopulateToolFormState,
   CommandError,
@@ -37,6 +41,17 @@ interface FocusSnapshot {
   selector: string
   start: number | null
   end: number | null
+}
+
+interface ScrollSnapshot {
+  selector: string
+  scrollTop: number
+}
+
+interface RenderSnapshot {
+  focus: FocusSnapshot | null
+  openDetailsSelectors: string[]
+  scrollSnapshots: ScrollSnapshot[]
 }
 
 const parseNumber = (value: string, fallback: number): number => {
@@ -88,6 +103,10 @@ const createFallbackState = (): GetStateResponse => ({
     sub_num_start: 0,
     sub_num_end: 1
   },
+  stream_defaults: {
+    preview_fps: 12,
+    auto_manage_preview_fps: false
+  },
   screens: []
 })
 
@@ -96,12 +115,62 @@ const toolRanges = (state: GetStateResponse): { cameraNumbers: number[]; subtype
   subtypeNumbers: rangeInclusive(state.auto_populate_tool.sub_num_start, state.auto_populate_tool.sub_num_end)
 })
 
+const isActiveCameraState = (state: string): boolean =>
+  state === 'connecting' || state === 'playing' || state === 'retrying'
+
+const activeCameraCount = (state: GetStateResponse): number =>
+  state.screens
+    .flatMap((screen) => screen.panels)
+    .filter((panel) => isActiveCameraState(panel.status.state))
+    .length
+
+const priorityPanelKey = (state: GetStateResponse): string | null => {
+  const activeScreen = state.screens[state.active_screen]
+  if (!activeScreen) {
+    return null
+  }
+
+  const panelId = state.active_panel_per_screen[state.active_screen] ?? 0
+  const panel = activeScreen.panels[panelId]
+  if (!panel || !isActiveCameraState(panel.status.state)) {
+    return null
+  }
+  if (panel.config.advanced.preview_fps_override !== null) {
+    return null
+  }
+  return `${state.active_screen}:${panelId}`
+}
+
+const inheritedPreviewFps = (state: GetStateResponse, screenId: number, panelId: number): number => {
+  const maxPreviewFps = clampInt(state.stream_defaults.preview_fps, 1, 30)
+  if (!state.stream_defaults.auto_manage_preview_fps) {
+    return maxPreviewFps
+  }
+
+  const activeCount = Math.max(activeCameraCount(state), 1)
+  const priorityKey = priorityPanelKey(state)
+  if (!priorityKey) {
+    const totalBudget = maxPreviewFps * 4
+    return clampInt(Math.ceil(totalBudget / activeCount), 1, maxPreviewFps)
+  }
+
+  const isPriorityPanel = priorityKey === `${screenId}:${panelId}`
+  const totalWeight = Math.max(activeCount - 1 + 2, 1)
+  const shareWeight = isPriorityPanel ? 2 : 1
+  const scaled = Math.floor((maxPreviewFps * 4 * shareWeight) / totalWeight)
+  return clampInt(scaled, 1, maxPreviewFps)
+}
+
 export class RtspViewerApp {
   private root: HTMLElement
   private deps: AppDeps
   private store = new UiStore()
   private unlistenFns: UnlistenFn[] = []
   private unsubscribeStore: (() => void) | null = null
+  private unsubscribeFrames: (() => void) | null = null
+  private frameFlushScheduled = false
+  private decodedFrames = new Map<string, { seq: number; url: string }>()
+  private pendingFrameDecodes = new Map<string, { seq: number; url: string }>()
 
   constructor(root: HTMLElement, deps: AppDeps) {
     this.root = root
@@ -112,18 +181,28 @@ export class RtspViewerApp {
     this.unsubscribeStore = this.store.subscribe((state) => {
       this.render(state)
     })
+    this.unsubscribeFrames = this.store.subscribeFrames(() => {
+      this.scheduleVisibleFrameFlush()
+    })
 
     this.root.addEventListener('click', this.handleClick)
     this.root.addEventListener('input', this.handleInput)
     this.root.addEventListener('change', this.handleChange)
     this.root.addEventListener('submit', this.handleSubmit)
     window.addEventListener('keydown', this.handleKeydown)
+    window.addEventListener('resize', this.handleResize)
 
     const startupErrors: string[] = []
     try {
       await this.attachBackendListeners()
     } catch (error) {
       startupErrors.push(`Event channel unavailable: ${toErrorMessage(error)}`)
+    }
+
+    try {
+      await this.deps.ipc.loadStartupConfig()
+    } catch (error) {
+      startupErrors.push(`Startup config unavailable: ${toErrorMessage(error)}`)
     }
 
     try {
@@ -147,6 +226,7 @@ export class RtspViewerApp {
     this.root.removeEventListener('change', this.handleChange)
     this.root.removeEventListener('submit', this.handleSubmit)
     window.removeEventListener('keydown', this.handleKeydown)
+    window.removeEventListener('resize', this.handleResize)
     for (const unlisten of this.unlistenFns) {
       await unlisten()
     }
@@ -155,6 +235,12 @@ export class RtspViewerApp {
       this.unsubscribeStore()
       this.unsubscribeStore = null
     }
+    if (this.unsubscribeFrames) {
+      this.unsubscribeFrames()
+      this.unsubscribeFrames = null
+    }
+    this.decodedFrames.clear()
+    this.pendingFrameDecodes.clear()
   }
 
   private readonly handleKeydown = async (event: KeyboardEvent): Promise<void> => {
@@ -172,6 +258,10 @@ export class RtspViewerApp {
     }
   }
 
+  private readonly handleResize = (): void => {
+    this.scheduleVisibleFrameFlush()
+  }
+
   private readonly handleSubmit = async (event: Event): Promise<void> => {
     const form = event.target
     if (!(form instanceof HTMLFormElement)) {
@@ -186,6 +276,11 @@ export class RtspViewerApp {
     if (action === 'run-auto-populate-tool') {
       event.preventDefault()
       await this.runAutoPopulateTool()
+      return
+    }
+    if (action === 'submit-app-settings') {
+      event.preventDefault()
+      await this.saveAppSettings()
     }
   }
 
@@ -198,6 +293,16 @@ export class RtspViewerApp {
     const toolField = target.dataset.toolField as keyof AutoPopulateToolFormState | undefined
     if (toolField) {
       this.store.updateAutoPopulateToolField(toolField, target.value)
+      return
+    }
+
+    const appField = target.dataset.appField as keyof AppSettingsModalState['form'] | undefined
+    if (appField) {
+      if (target instanceof HTMLInputElement && target.type === 'checkbox') {
+        this.store.updateAppSettingsField(appField, target.checked)
+      } else {
+        this.store.updateAppSettingsField(appField, target.value)
+      }
       return
     }
 
@@ -243,6 +348,16 @@ export class RtspViewerApp {
     const toolField = target.dataset.toolField as keyof AutoPopulateToolFormState | undefined
     if (toolField) {
       this.store.updateAutoPopulateToolField(toolField, target.value)
+      return
+    }
+
+    const appField = target.dataset.appField as keyof AppSettingsModalState['form'] | undefined
+    if (appField) {
+      if (target instanceof HTMLInputElement && target.type === 'checkbox') {
+        this.store.updateAppSettingsField(appField, target.checked)
+      } else {
+        this.store.updateAppSettingsField(appField, target.value)
+      }
       return
     }
 
@@ -292,6 +407,25 @@ export class RtspViewerApp {
       return
     }
 
+    if (action === 'close-app-settings') {
+      if (target.classList.contains('modal-backdrop')) {
+        const originalTarget = event.target
+        if (originalTarget instanceof HTMLElement && originalTarget.closest('.modal')) {
+          return
+        }
+      }
+      this.store.closeAppSettingsModal()
+      return
+    }
+
+    if (action === 'exit-fullscreen') {
+      await this.execute(async () => {
+        await this.deps.ipc.toggleFullscreen(false)
+        await this.syncState()
+      })
+      return
+    }
+
     await this.execute(async () => {
       switch (action) {
         case 'switch-screen':
@@ -328,6 +462,18 @@ export class RtspViewerApp {
         case 'open-settings':
           this.openSettings(screenId, panelId)
           break
+        case 'enter-fullscreen':
+          if (Number.isFinite(screenId) && Number.isFinite(panelId)) {
+            await this.deps.ipc.setActiveScreen(screenId)
+            await this.deps.ipc.setActivePanel(screenId, panelId)
+            await this.deps.ipc.toggleFullscreen(true)
+            await this.syncState()
+          }
+          break
+        case 'open-app-settings':
+          this.store.closeModal()
+          this.store.openAppSettingsModal()
+          break
         case 'start-screen': {
           const snapshot = this.store.snapshot()
           if (snapshot.data && snapshot.data.screens.length > 0) {
@@ -361,13 +507,6 @@ export class RtspViewerApp {
         case 'load-config': {
           const path = await this.deps.ipc.loadConfig(null)
           this.notify('success', `Config loaded: ${path}`)
-          await this.syncState()
-          break
-        }
-        case 'toggle-fullscreen': {
-          const snapshot = this.store.snapshot()
-          const next = !(snapshot.data?.fullscreen ?? false)
-          await this.deps.ipc.toggleFullscreen(next)
           await this.syncState()
           break
         }
@@ -444,7 +583,10 @@ export class RtspViewerApp {
     }
 
     const ranges = toolRanges(snapshot.data)
+    const previewOverride = panel.config.advanced.preview_fps_override
+    const inheritedFps = inheritedPreviewFps(snapshot.data, screenId, panelId)
 
+    this.store.closeAppSettingsModal()
     this.store.openModal({
       screenId,
       panelId,
@@ -467,6 +609,8 @@ export class RtspViewerApp {
         retryMaxMs: String(panel.config.advanced.retry_max_ms),
         retryJitterMs: String(panel.config.advanced.retry_jitter_ms),
         maxFailures: String(panel.config.advanced.max_failures),
+        previewFpsOverrideEnabled: previewOverride !== null,
+        previewFpsOverride: String(previewOverride ?? inheritedFps),
         clearSecret: false
       }
     })
@@ -538,7 +682,11 @@ export class RtspViewerApp {
     await this.syncState()
   }
 
-  private createAdvancedPatch(current: PanelConfig, modal: SettingsModalState): PanelConfigPatch['advanced'] {
+  private createAdvancedPatch(
+    current: PanelConfig,
+    modal: SettingsModalState,
+    inheritedPreviewFps: number
+  ): PanelConfigPatch['advanced'] {
     return {
       connection_timeout_ms: clampInt(
         parseNumber(modal.form.connectionTimeoutMs, current.advanced.connection_timeout_ms),
@@ -549,8 +697,36 @@ export class RtspViewerApp {
       retry_base_ms: clampInt(parseNumber(modal.form.retryBaseMs, current.advanced.retry_base_ms), 100, 120000),
       retry_max_ms: clampInt(parseNumber(modal.form.retryMaxMs, current.advanced.retry_max_ms), 100, 120000),
       retry_jitter_ms: clampInt(parseNumber(modal.form.retryJitterMs, current.advanced.retry_jitter_ms), 0, 120000),
-      max_failures: clampInt(parseNumber(modal.form.maxFailures, current.advanced.max_failures), 1, 1000)
+      max_failures: clampInt(parseNumber(modal.form.maxFailures, current.advanced.max_failures), 1, 1000),
+      preview_fps_override: modal.form.previewFpsOverrideEnabled
+        ? clampInt(parseNumber(modal.form.previewFpsOverride, current.advanced.preview_fps_override ?? inheritedPreviewFps), 1, 30)
+        : null
     }
+  }
+
+  private async saveAppSettings(): Promise<void> {
+    const snapshot = this.store.snapshot()
+    const modal = snapshot.appSettingsModal
+    const data = snapshot.data
+    if (!modal || !data) {
+      return
+    }
+
+    await this.execute(async () => {
+      const previewFps = clampInt(parseNumber(modal.form.previewFps, data.stream_defaults.preview_fps), 1, 30)
+      await this.deps.ipc.updateStreamDefaults({
+        preview_fps: previewFps,
+        auto_manage_preview_fps: modal.form.autoManagePreviewFps
+      })
+      this.store.closeAppSettingsModal()
+      await this.syncState()
+      this.notify(
+        'success',
+        modal.form.autoManagePreviewFps
+          ? `Automatic preview FPS management updated (cap ${previewFps})`
+          : `Default preview FPS updated to ${previewFps}`
+      )
+    })
   }
 
   private async saveModal(): Promise<void> {
@@ -569,6 +745,7 @@ export class RtspViewerApp {
     const cameraNumProvided = modal.form.cameraNum.trim().length > 0
     const cameraNum = cameraNumProvided ? clampInt(parseNumber(modal.form.cameraNum, 0), 0, 9999) : null
     const subNum = clampInt(parseNumber(modal.form.subNum, 0), 0, 9999)
+    const inheritedFps = inheritedPreviewFps(data, modal.screenId, modal.panelId)
 
     await this.execute(async () => {
       let host = modal.form.host.trim()
@@ -598,7 +775,7 @@ export class RtspViewerApp {
         sub_num: cameraNum !== null ? subNum : null,
         transport: modal.form.transport,
         latency_ms: clampInt(parseNumber(modal.form.latencyMs, panel.config.latency_ms), 0, 5000),
-        advanced: this.createAdvancedPatch(panel.config, modal)
+        advanced: this.createAdvancedPatch(panel.config, modal, inheritedFps)
       }
 
       await this.deps.ipc.updatePanelConfig(modal.screenId, modal.panelId, patch)
@@ -624,6 +801,141 @@ export class RtspViewerApp {
     window.setTimeout(() => {
       this.store.dismissNotification(id)
     }, 5000)
+  }
+
+  private scheduleVisibleFrameFlush(): void {
+    if (this.frameFlushScheduled) {
+      return
+    }
+    this.frameFlushScheduled = true
+    window.requestAnimationFrame(() => {
+      this.frameFlushScheduled = false
+      this.flushVisibleFrames()
+    })
+  }
+
+  private flushVisibleFrames(): void {
+    const data = this.store.currentData()
+    if (!data) {
+      return
+    }
+
+    const activeScreen = data.screens[data.active_screen]
+    if (!activeScreen) {
+      return
+    }
+
+    activeScreen.panels.forEach((_, panelId) => {
+      const key = panelKey(activeScreen.id, panelId)
+      const selector = `[data-frame-image="true"][data-screen-id="${activeScreen.id}"][data-panel-id="${panelId}"]`
+      const placeholderSelector = `[data-frame-placeholder="true"][data-screen-id="${activeScreen.id}"][data-panel-id="${panelId}"]`
+      const fpsSelector = `[data-frame-fps="true"][data-screen-id="${activeScreen.id}"][data-panel-id="${panelId}"]`
+      const image = this.root.querySelector(selector)
+      const placeholder = this.root.querySelector(placeholderSelector)
+      const fps = this.root.querySelector(fpsSelector)
+      const frame = this.store.frame(activeScreen.id, panelId)
+      const frameUrl = frame ? `data:${frame.mime};base64,${frame.data_base64}` : null
+      const fpsLabel = this.store.frameFpsLabel(activeScreen.id, panelId)
+      let decoded = this.decodedFrames.get(key)
+
+      if (image instanceof HTMLImageElement) {
+        if (frame && frameUrl) {
+          if (!decoded || decoded.seq !== frame.seq) {
+            this.decodeFrameForDisplay(activeScreen.id, panelId, frame.seq, frameUrl)
+            decoded = this.decodedFrames.get(key) ?? decoded
+          }
+        } else {
+          this.decodedFrames.delete(key)
+          this.pendingFrameDecodes.delete(key)
+          decoded = undefined
+        }
+
+        if (decoded && (!frame || decoded.seq <= frame.seq)) {
+          if (image.getAttribute('src') !== decoded.url) {
+            image.src = decoded.url
+          }
+        } else {
+          image.removeAttribute('src')
+        }
+        image.classList.toggle('hidden', !decoded)
+      }
+
+      if (placeholder instanceof HTMLElement) {
+        placeholder.classList.toggle('hidden', Boolean(decoded))
+      }
+
+      if (fps instanceof HTMLElement && fps.textContent !== fpsLabel) {
+        fps.textContent = fpsLabel
+      }
+    })
+  }
+
+  private decodeFrameForDisplay(screenId: number, panelId: number, seq: number, frameUrl: string): void {
+    const key = panelKey(screenId, panelId)
+    const pending = this.pendingFrameDecodes.get(key)
+    if (pending && pending.seq >= seq) {
+      return
+    }
+
+    this.pendingFrameDecodes.set(key, { seq, url: frameUrl })
+
+    const commit = (): void => {
+      const latestPending = this.pendingFrameDecodes.get(key)
+      const currentFrame = this.store.frame(screenId, panelId)
+      if (!latestPending || latestPending.seq !== seq || !currentFrame || currentFrame.seq !== seq) {
+        return
+      }
+      this.pendingFrameDecodes.delete(key)
+      this.decodedFrames.set(key, { seq, url: frameUrl })
+      this.scheduleVisibleFrameFlush()
+    }
+
+    const reject = (): void => {
+      const latestPending = this.pendingFrameDecodes.get(key)
+      if (latestPending?.seq === seq) {
+        this.pendingFrameDecodes.delete(key)
+      }
+    }
+
+    const loader = new Image()
+    loader.decoding = 'async'
+
+    const isJsdom =
+      typeof navigator !== 'undefined' && typeof navigator.userAgent === 'string' && /jsdom/i.test(navigator.userAgent)
+    if (isJsdom) {
+      loader.src = frameUrl
+      commit()
+      return
+    }
+
+    if (typeof loader.decode === 'function') {
+      loader.src = frameUrl
+      loader
+        .decode()
+        .then(commit)
+        .catch(reject)
+      return
+    }
+
+    loader.src = frameUrl
+    commit()
+  }
+
+  private captureRenderSnapshot(): RenderSnapshot {
+    const openDetailsSelectors = Array.from(this.root.querySelectorAll<HTMLDetailsElement>('details[data-persist-details]'))
+      .filter((details) => details.open)
+      .map((details) => `details[data-persist-details="${details.dataset.persistDetails}"]`)
+
+    const scrollSnapshots = Array.from(this.root.querySelectorAll<HTMLElement>('[data-persist-scroll]')).map((element) => ({
+      selector: `[data-persist-scroll="${element.dataset.persistScroll}"]`,
+      scrollTop: element.scrollTop
+    }))
+
+    return {
+      focus: this.captureFocusSnapshot(),
+      openDetailsSelectors,
+      scrollSnapshots
+    }
   }
 
   private captureFocusSnapshot(): FocusSnapshot | null {
@@ -652,6 +964,19 @@ export class RtspViewerApp {
       }
     }
 
+    const appField = active.dataset.appField
+    if (appField) {
+      return {
+        selector: `[data-app-field="${appField}"]`,
+        start:
+          active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
+            ? active.selectionStart
+            : null,
+        end:
+          active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement ? active.selectionEnd : null
+      }
+    }
+
     const field = active.dataset.field
     if (!field) {
       return null
@@ -664,6 +989,24 @@ export class RtspViewerApp {
       end:
         active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement ? active.selectionEnd : null
     }
+  }
+
+  private restoreRenderSnapshot(snapshot: RenderSnapshot): void {
+    for (const selector of snapshot.openDetailsSelectors) {
+      const details = this.root.querySelector(selector)
+      if (details instanceof HTMLDetailsElement) {
+        details.open = true
+      }
+    }
+
+    for (const scrollSnapshot of snapshot.scrollSnapshots) {
+      const target = this.root.querySelector(scrollSnapshot.selector)
+      if (target instanceof HTMLElement) {
+        target.scrollTop = scrollSnapshot.scrollTop
+      }
+    }
+
+    this.restoreFocusSnapshot(snapshot.focus)
   }
 
   private restoreFocusSnapshot(snapshot: FocusSnapshot | null): void {
@@ -705,6 +1048,7 @@ export class RtspViewerApp {
 
     const activeScreen = state.data.screens[state.data.active_screen]
     const activePanelId = state.data.active_panel_per_screen[state.data.active_screen] ?? 0
+    const activePanel = activeScreen?.panels[activePanelId]
     const hasScreens = state.data.screens.length > 0
     const subtypeOptions = toolRanges(state.data).subtypeNumbers
 
@@ -717,11 +1061,25 @@ export class RtspViewerApp {
               panel,
               active: panelId === activePanelId,
               frameUrl: this.store.frameDataUrl(activeScreen.id, panelId),
+              hasFrame: this.store.hasFrame(activeScreen.id, panelId),
+              fpsLabel: this.store.frameFpsLabel(activeScreen.id, panelId),
               subtypeOptions: subtypeOptions.length > 0 ? subtypeOptions : [0]
             })
           )
           .join('')
       : ''
+
+    const fullscreenMarkup =
+      state.data.fullscreen && activeScreen && activePanel
+        ? renderFullscreenPanel({
+            screenId: activeScreen.id,
+            panelId: activePanelId,
+            panel: activePanel,
+            frameUrl: this.store.frameDataUrl(activeScreen.id, activePanelId),
+            hasFrame: this.store.hasFrame(activeScreen.id, activePanelId),
+            fpsLabel: this.store.frameFpsLabel(activeScreen.id, activePanelId)
+          })
+        : ''
 
     let modalMarkup = ''
     if (state.modal) {
@@ -769,6 +1127,12 @@ export class RtspViewerApp {
       }
     }
 
+    const appSettingsMarkup = state.appSettingsModal
+      ? renderAppSettingsModal({
+          modal: state.appSettingsModal
+        })
+      : ''
+
     let contentMarkup = ''
     if (state.autoPopulateToolOpen && state.autoPopulateToolForm) {
       const cameraStart = clampInt(parseNumber(state.autoPopulateToolForm.cameraNumStart, 0), 0, 9999)
@@ -782,6 +1146,8 @@ export class RtspViewerApp {
         cameraCount,
         subtypeCount
       })
+    } else if (state.data.fullscreen) {
+      contentMarkup = fullscreenMarkup
     } else if (!hasScreens) {
       contentMarkup = renderEmptyWorkspace()
     } else {
@@ -790,14 +1156,17 @@ export class RtspViewerApp {
         <section class="screen-grid">${cards}</section>`
     }
 
-    const focusSnapshot = this.captureFocusSnapshot()
-    this.root.innerHTML = `<main class="shell">
+    const renderSnapshot = this.captureRenderSnapshot()
+    const shellClass = state.data.fullscreen ? 'shell shell-fullscreen' : 'shell'
+    this.root.innerHTML = `<main class="${shellClass}">
       ${renderNotifications(state.notifications)}
-      ${renderToolbar(state.data, state.autoPopulateToolOpen)}
+      ${state.data.fullscreen ? '' : renderToolbar(state.data, state.autoPopulateToolOpen)}
       ${contentMarkup}
       ${modalMarkup}
+      ${appSettingsMarkup}
     </main>`
-    this.restoreFocusSnapshot(focusSnapshot)
+    this.restoreRenderSnapshot(renderSnapshot)
+    this.scheduleVisibleFrameFlush()
   }
 }
 

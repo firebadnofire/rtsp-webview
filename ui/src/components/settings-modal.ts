@@ -27,7 +27,7 @@ export const renderSettingsModal = ({
 }: SettingsModalInput): string => {
   const secretStatus = panel.secret_present ? 'Credentials stored' : 'No credentials stored'
   return `<div class="modal-backdrop" data-action="close-modal">
-    <div class="modal" data-modal="true">
+    <div class="modal" data-modal="true" data-persist-scroll="settings-modal">
       <header class="modal-header">
         <h3>Panel Settings</h3>
       </header>
@@ -55,7 +55,7 @@ export const renderSettingsModal = ({
         <label class="checkbox-row"><input data-field="clearSecret" type="checkbox" ${boolAttr(modal.form.clearSecret)} /> Clear stored credentials</label>
         <label class="checkbox-row"><input data-action="toggle-reveal" type="checkbox" ${boolAttr(revealPassword)} /> Reveal password in preview</label>
         <div class="preview-row"><strong>RTSP Preview:</strong><code>${escapeHtml(previewUrl)}</code></div>
-        <details class="advanced-settings">
+        <details class="advanced-settings" data-persist-details="advanced-settings">
           <summary>Advanced Stream Settings</summary>
           <label>Connection timeout (ms)<input data-field="connectionTimeoutMs" type="number" min="100" value="${valueOrEmpty(modal.form.connectionTimeoutMs)}" /></label>
           <label>Stall timeout (ms)<input data-field="stallTimeoutMs" type="number" min="100" value="${valueOrEmpty(modal.form.stallTimeoutMs)}" /></label>
@@ -63,6 +63,19 @@ export const renderSettingsModal = ({
           <label>Retry max (ms)<input data-field="retryMaxMs" type="number" min="100" value="${valueOrEmpty(modal.form.retryMaxMs)}" /></label>
           <label>Retry jitter (ms)<input data-field="retryJitterMs" type="number" min="0" value="${valueOrEmpty(modal.form.retryJitterMs)}" /></label>
           <label>Max failures<input data-field="maxFailures" type="number" min="1" value="${valueOrEmpty(modal.form.maxFailures)}" /></label>
+          <label class="checkbox-row"><input data-field="previewFpsOverrideEnabled" type="checkbox" ${boolAttr(modal.form.previewFpsOverrideEnabled)} /> Override inherited preview FPS</label>
+          <label>Inherited preview FPS override
+            <input
+              data-field="previewFpsOverride"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              autocomplete="off"
+              spellcheck="false"
+              value="${valueOrEmpty(modal.form.previewFpsOverride)}"
+              ${modal.form.previewFpsOverrideEnabled ? '' : 'disabled'}
+            />
+          </label>
         </details>
         <footer class="modal-actions">
           <button type="button" data-action="close-modal">Cancel</button>
