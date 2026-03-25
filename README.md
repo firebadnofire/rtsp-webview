@@ -1,48 +1,30 @@
 # rtsp-webview
 
-## Makefile usage
+## Local run
 
 ```bash
-make setup
+cd ui && npm ci && npm run build
+cargo run
 ```
-Install UI dependencies (`npm ci` in `ui/`).
+Build the frontend bundle on the host OS and run the Tauri app locally.
+
+## Linux tarball
 
 ```bash
-make ui-build
+./build-helpers/build-linux-tarball.sh
 ```
-Build the frontend bundle used by Tauri.
+Build the Dockerized Linux tarball at `dist/linux/rtsp-viewer-<version>-linux-<arch>.tar.gz`.
+
+To change the output directory:
 
 ```bash
-make run
+./build-helpers/build-linux-tarball.sh /absolute/path/to/output
 ```
-Build the frontend bundle and then run the app with `cargo run`.
 
-```bash
-make release-bin
-```
-Build the frontend bundle and produce a release binary at `target/release/rtsp_viewer_tauri`.
-
-```bash
-make rust-test
-```
-Run Rust tests.
-
-```bash
-make ui-test
-```
-Run UI tests.
-
-```bash
-make test
-```
-Run both Rust and UI tests.
-
-```bash
-make fmt
-```
-Format Rust code.
+## Cleaning
 
 ```bash
 make clean
 ```
-Remove build and install artifacts (`target/`, `ui/dist`, and `ui/node_modules`).
+
+Remove local build artifacts, generated tarball output directories, Docker build cache for the Linux tarball pipeline, and the ignored `/vendor/` scratch directory.
