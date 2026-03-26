@@ -14,6 +14,7 @@ use rtsp_core::{
     MAX_SCREEN_COUNT, PANELS_PER_SCREEN,
 };
 use rtsp_secrets::SecretPayload;
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -51,28 +52,76 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
-fn append_common_user_config_locations(paths: &mut Vec<PathBuf>) {
+fn push_config_path(paths: &mut Vec<PathBuf>, directory: &Path) {
+    push_unique_path(paths, directory.join(DEFAULT_CONFIG_FILE_NAME));
+}
+
+fn resolve_home_directory() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(home));
+    }
+
+    if let Some(user_profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(user_profile));
+    }
+
+    let home_drive = std::env::var_os("HOMEDRIVE").filter(|value| !value.is_empty());
+    let home_path = std::env::var_os("HOMEPATH").filter(|value| !value.is_empty());
+    if let (Some(home_drive), Some(home_path)) = (home_drive, home_path) {
+        let mut combined = OsString::from(home_drive);
+        combined.push(home_path);
+        return Some(PathBuf::from(combined));
+    }
+
+    dirs::home_dir()
+}
+
+fn append_home_relative_config_locations(paths: &mut Vec<PathBuf>, home_dir: &Path) {
+    push_config_path(paths, home_dir);
+
+    for directory_name in [
+        "Documents",
+        "Downloads",
+        "Pictures",
+        "Desktop",
+        "Music",
+        "Videos",
+        "Movies",
+    ] {
+        push_config_path(paths, &home_dir.join(directory_name));
+    }
+}
+
+fn append_dirs_config_locations(paths: &mut Vec<PathBuf>) {
     if let Some(home_dir) = dirs::home_dir() {
-        push_unique_path(paths, home_dir.join(DEFAULT_CONFIG_FILE_NAME));
+        push_config_path(paths, &home_dir);
     }
     if let Some(document_dir) = dirs::document_dir() {
-        push_unique_path(paths, document_dir.join(DEFAULT_CONFIG_FILE_NAME));
+        push_config_path(paths, &document_dir);
     }
     if let Some(download_dir) = dirs::download_dir() {
-        push_unique_path(paths, download_dir.join(DEFAULT_CONFIG_FILE_NAME));
+        push_config_path(paths, &download_dir);
     }
     if let Some(picture_dir) = dirs::picture_dir() {
-        push_unique_path(paths, picture_dir.join(DEFAULT_CONFIG_FILE_NAME));
+        push_config_path(paths, &picture_dir);
     }
     if let Some(desktop_dir) = dirs::desktop_dir() {
-        push_unique_path(paths, desktop_dir.join(DEFAULT_CONFIG_FILE_NAME));
+        push_config_path(paths, &desktop_dir);
     }
     if let Some(audio_dir) = dirs::audio_dir() {
-        push_unique_path(paths, audio_dir.join(DEFAULT_CONFIG_FILE_NAME));
+        push_config_path(paths, &audio_dir);
     }
     if let Some(video_dir) = dirs::video_dir() {
-        push_unique_path(paths, video_dir.join(DEFAULT_CONFIG_FILE_NAME));
+        push_config_path(paths, &video_dir);
     }
+}
+
+fn append_common_user_config_locations(paths: &mut Vec<PathBuf>) {
+    if let Some(home_dir) = resolve_home_directory() {
+        append_home_relative_config_locations(paths, &home_dir);
+    }
+
+    append_dirs_config_locations(paths);
 }
 
 fn resolve_startup_config_path() -> Option<PathBuf> {
@@ -1160,14 +1209,16 @@ pub async fn delete_screen(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_secret_updates, atomic_write, build_auto_populate_assignments, collect_saved_secrets,
-        resolve_auto_populated_url, resolve_config_secrets,
+        append_home_relative_config_locations, apply_secret_updates, atomic_write,
+        build_auto_populate_assignments, collect_saved_secrets, resolve_auto_populated_url,
+        resolve_config_secrets, DEFAULT_CONFIG_FILE_NAME,
     };
     use crate::app_state::ManagedState;
     use crate::state::{AppRuntimeState, PanelSecret};
     use rtsp_core::{default_app_config, AutoPopulateTool, SavedSecret, PANELS_PER_SCREEN};
     use rtsp_secrets::{SecretError, SecretPayload, SecretStore};
     use std::collections::{HashMap, HashSet};
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
@@ -1221,6 +1272,27 @@ mod tests {
         atomic_write(&path, b"{\"schema_version\":3}").expect("second write should succeed");
         let second = std::fs::read_to_string(&path).expect("file should still exist");
         assert_eq!(second, "{\"schema_version\":3}");
+    }
+
+    #[test]
+    fn home_relative_config_locations_cover_common_directories() {
+        let home_dir = PathBuf::from("/tmp/rtsp-viewer-home");
+        let mut paths = Vec::new();
+
+        append_home_relative_config_locations(&mut paths, &home_dir);
+
+        let expected = vec![
+            home_dir.join(DEFAULT_CONFIG_FILE_NAME),
+            home_dir.join("Documents").join(DEFAULT_CONFIG_FILE_NAME),
+            home_dir.join("Downloads").join(DEFAULT_CONFIG_FILE_NAME),
+            home_dir.join("Pictures").join(DEFAULT_CONFIG_FILE_NAME),
+            home_dir.join("Desktop").join(DEFAULT_CONFIG_FILE_NAME),
+            home_dir.join("Music").join(DEFAULT_CONFIG_FILE_NAME),
+            home_dir.join("Videos").join(DEFAULT_CONFIG_FILE_NAME),
+            home_dir.join("Movies").join(DEFAULT_CONFIG_FILE_NAME),
+        ];
+
+        assert_eq!(paths, expected);
     }
 
     fn sample_tool() -> AutoPopulateTool {

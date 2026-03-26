@@ -85,7 +85,8 @@ Current search order:
 7. Desktop
 8. Music
 9. Videos
-10. repository root in debug builds
+10. Movies
+11. repository root in debug builds
 
 When a config is saved, any camera that is active at save time is marked to start again when that config is loaded later.
 

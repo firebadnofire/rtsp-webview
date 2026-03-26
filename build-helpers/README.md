@@ -128,6 +128,44 @@ rtsp-viewer-0.1.0-linux-x86_64.tar.gz
 
 The tarball includes the compiled binary, the project license, and Linux runtime notes.
 
+## macOS App Helper
+
+On macOS, from the repository root, run:
+
+```bash
+./build-helpers/build-macos-app.sh
+```
+
+This script exits immediately on non-macOS systems.
+
+It uses the current machine's native macOS tooling to:
+
+- run `npm ci`
+- build the frontend bundle
+- build the release Rust binary
+- assemble `RTSP Viewer.app`
+- try to generate an `.icns` file from `src-tauri/icons/icon.png`
+- ad-hoc sign the app bundle with `codesign`
+
+Output:
+
+```text
+dist/macos/RTSP Viewer.app
+```
+
+Required tools:
+
+- `node`
+- `npm`
+- `cargo`
+- `rustup`
+- `codesign`
+
+Optional tools for a custom Finder icon:
+
+- `sips`
+- `iconutil`
+
 ## Linux Package Helper
 
 After `dist/linux/rtsp-viewer-*.tar.gz` already exists, run:
