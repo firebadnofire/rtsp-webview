@@ -51,6 +51,30 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
+fn append_common_user_config_locations(paths: &mut Vec<PathBuf>) {
+    if let Some(home_dir) = dirs::home_dir() {
+        push_unique_path(paths, home_dir.join(DEFAULT_CONFIG_FILE_NAME));
+    }
+    if let Some(document_dir) = dirs::document_dir() {
+        push_unique_path(paths, document_dir.join(DEFAULT_CONFIG_FILE_NAME));
+    }
+    if let Some(download_dir) = dirs::download_dir() {
+        push_unique_path(paths, download_dir.join(DEFAULT_CONFIG_FILE_NAME));
+    }
+    if let Some(picture_dir) = dirs::picture_dir() {
+        push_unique_path(paths, picture_dir.join(DEFAULT_CONFIG_FILE_NAME));
+    }
+    if let Some(desktop_dir) = dirs::desktop_dir() {
+        push_unique_path(paths, desktop_dir.join(DEFAULT_CONFIG_FILE_NAME));
+    }
+    if let Some(audio_dir) = dirs::audio_dir() {
+        push_unique_path(paths, audio_dir.join(DEFAULT_CONFIG_FILE_NAME));
+    }
+    if let Some(video_dir) = dirs::video_dir() {
+        push_unique_path(paths, video_dir.join(DEFAULT_CONFIG_FILE_NAME));
+    }
+}
+
 fn resolve_startup_config_path() -> Option<PathBuf> {
     let mut candidates = Vec::new();
 
@@ -63,6 +87,8 @@ fn resolve_startup_config_path() -> Option<PathBuf> {
             push_unique_path(&mut candidates, parent.join(DEFAULT_CONFIG_FILE_NAME));
         }
     }
+
+    append_common_user_config_locations(&mut candidates);
 
     if cfg!(debug_assertions) {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

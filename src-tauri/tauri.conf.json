@@ -37,7 +37,11 @@
     ],
     "bundle": {
       "active": false,
-      "identifier": "com.rtspviewer.app"
+      "identifier": "com.rtspviewer.app",
+      "icon": [
+        "icons/icon.png",
+        "icons/icon.ico"
+      ]
     },
     "security": {
       "csp": null

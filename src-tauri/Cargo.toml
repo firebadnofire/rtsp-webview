@@ -16,6 +16,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock"] }
+dirs = "6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "fs", "process", "io-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 url = "2"
