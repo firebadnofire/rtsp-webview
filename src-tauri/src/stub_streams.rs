@@ -5,6 +5,8 @@ use crate::state::{FrameCache, PanelKey};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use rtsp_core::{PanelFrameEvent, PanelState, PanelStatusEvent, IPC_VERSION};
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
@@ -24,8 +26,13 @@ const STARTUP_KEYFRAME_MESSAGE: &str = "Waiting for initial keyframe";
 const PREVIEW_MAX_WIDTH: u32 = 2560;
 const PREVIEW_MAX_HEIGHT: u32 = 1440;
 const PREVIEW_JPEG_QUALITY: u8 = 4;
+const FFMPEG_OVERRIDE_ENV: &str = "RTSP_VIEWER_FFMPEG";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
+const FFMPEG_BINARY_NAMES: &[&str] = &["ffmpeg.exe", "ffmpeg.cmd", "ffmpeg.bat", "ffmpeg"];
+#[cfg(not(windows))]
+const FFMPEG_BINARY_NAMES: &[&str] = &["ffmpeg"];
 
 pub async fn ensure_started(
     app: AppHandle,
@@ -251,7 +258,8 @@ fn spawn_ffmpeg_process(
 ) -> Result<(Child, ChildStdout, JoinHandle<String>), CommandError> {
     let preview_filter = build_preview_filter(preview_fps);
     let jpeg_quality = PREVIEW_JPEG_QUALITY;
-    let mut command = Command::new("ffmpeg");
+    let ffmpeg_executable = resolve_ffmpeg_executable()?;
+    let mut command = Command::new(&ffmpeg_executable);
     command
         .arg("-nostdin")
         .arg("-v")
@@ -287,7 +295,7 @@ fn spawn_ffmpeg_process(
 
     let mut child = command
         .spawn()
-        .map_err(|error| CommandError::decode(format!("failed to run ffmpeg: {}", error)))?;
+        .map_err(|error| map_ffmpeg_spawn_error(&ffmpeg_executable, error))?;
 
     let stdout = child
         .stdout
@@ -305,6 +313,158 @@ fn spawn_ffmpeg_process(
     });
 
     Ok((child, stdout, stderr_task))
+}
+
+fn resolve_ffmpeg_executable() -> Result<PathBuf, CommandError> {
+    if let Some(configured) =
+        std::env::var_os(FFMPEG_OVERRIDE_ENV).filter(|value| !value.is_empty())
+    {
+        let configured_path = PathBuf::from(configured);
+        if is_path_like(&configured_path) && !configured_path.is_file() {
+            return Err(CommandError::decode(format!(
+                "{} points to a missing file: {}",
+                FFMPEG_OVERRIDE_ENV,
+                configured_path.display()
+            )));
+        }
+        return Ok(configured_path);
+    }
+
+    let search_dirs = ffmpeg_search_dirs();
+    resolve_executable_in_dirs(&search_dirs, FFMPEG_BINARY_NAMES)
+        .ok_or_else(|| CommandError::decode(ffmpeg_not_found_message()))
+}
+
+fn is_path_like(path: &Path) -> bool {
+    path.is_absolute() || path.components().count() > 1
+}
+
+fn ffmpeg_search_dirs() -> Vec<PathBuf> {
+    let mut search_dirs = Vec::new();
+
+    append_path_search_dirs(&mut search_dirs);
+
+    let current_exe = std::env::current_exe().ok();
+    append_executable_relative_search_dirs(&mut search_dirs, current_exe.as_deref());
+    append_platform_ffmpeg_search_dirs(&mut search_dirs);
+
+    search_dirs
+}
+
+fn append_path_search_dirs(search_dirs: &mut Vec<PathBuf>) {
+    let Some(path_value) = std::env::var_os("PATH") else {
+        return;
+    };
+
+    for directory in std::env::split_paths(&path_value) {
+        if !directory.as_os_str().is_empty() {
+            push_unique_search_dir(search_dirs, directory);
+        }
+    }
+}
+
+fn append_executable_relative_search_dirs(
+    search_dirs: &mut Vec<PathBuf>,
+    current_exe: Option<&Path>,
+) {
+    let Some(current_exe) = current_exe else {
+        return;
+    };
+
+    let Some(executable_dir) = current_exe.parent() else {
+        return;
+    };
+
+    push_unique_search_dir(search_dirs, executable_dir.to_path_buf());
+    push_unique_search_dir(search_dirs, executable_dir.join("bin"));
+
+    #[cfg(target_os = "macos")]
+    if let Some(contents_dir) = executable_dir.parent() {
+        push_unique_search_dir(search_dirs, contents_dir.join("Resources"));
+        push_unique_search_dir(search_dirs, contents_dir.join("Resources").join("bin"));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn append_platform_ffmpeg_search_dirs(search_dirs: &mut Vec<PathBuf>) {
+    for directory in [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/opt/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ] {
+        push_unique_search_dir(search_dirs, PathBuf::from(directory));
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn append_platform_ffmpeg_search_dirs(search_dirs: &mut Vec<PathBuf>) {
+    for directory in ["/usr/local/bin", "/usr/bin", "/bin", "/snap/bin"] {
+        push_unique_search_dir(search_dirs, PathBuf::from(directory));
+    }
+}
+
+#[cfg(windows)]
+fn append_platform_ffmpeg_search_dirs(search_dirs: &mut Vec<PathBuf>) {
+    if let Some(program_files) = std::env::var_os("ProgramFiles").filter(|value| !value.is_empty())
+    {
+        push_unique_search_dir(
+            search_dirs,
+            PathBuf::from(program_files).join("ffmpeg").join("bin"),
+        );
+    }
+    if let Some(program_files_x86) =
+        std::env::var_os("ProgramFiles(x86)").filter(|value| !value.is_empty())
+    {
+        push_unique_search_dir(
+            search_dirs,
+            PathBuf::from(program_files_x86).join("ffmpeg").join("bin"),
+        );
+    }
+}
+
+fn push_unique_search_dir(search_dirs: &mut Vec<PathBuf>, directory: PathBuf) {
+    if !search_dirs.iter().any(|candidate| candidate == &directory) {
+        search_dirs.push(directory);
+    }
+}
+
+fn resolve_executable_in_dirs(search_dirs: &[PathBuf], binary_names: &[&str]) -> Option<PathBuf> {
+    for directory in search_dirs {
+        for binary_name in binary_names {
+            let candidate = directory.join(binary_name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+fn map_ffmpeg_spawn_error(ffmpeg_executable: &Path, error: std::io::Error) -> CommandError {
+    if error.kind() == ErrorKind::NotFound {
+        return CommandError::decode(ffmpeg_not_found_message());
+    }
+
+    CommandError::decode(format!(
+        "failed to run ffmpeg at {}: {}",
+        ffmpeg_executable.display(),
+        error
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn ffmpeg_not_found_message() -> String {
+    "ffmpeg was not found on PATH or in common macOS locations. Finder-launched apps do not inherit your shell PATH; install ffmpeg in /opt/homebrew/bin or /usr/local/bin, or set RTSP_VIEWER_FFMPEG to an absolute path.".to_string()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ffmpeg_not_found_message() -> String {
+    "ffmpeg was not found on PATH or in common install locations. Set RTSP_VIEWER_FFMPEG to an absolute path if it is installed elsewhere.".to_string()
 }
 
 #[cfg(windows)]
@@ -593,6 +753,7 @@ async fn set_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn startup_reads_allow_more_time_than_steady_state() {
@@ -632,5 +793,43 @@ mod tests {
             "fps=7,scale=w='min(2560,iw)':h='min(1440,ih)':force_original_aspect_ratio=decrease:flags=fast_bilinear"
         );
         assert_eq!(PREVIEW_JPEG_QUALITY, 4);
+    }
+
+    #[test]
+    fn executable_resolution_uses_search_directories() {
+        let temp_dir = tempfile::tempdir().expect("tempdir should create");
+        let missing_dir = temp_dir.path().join("missing");
+        let present_dir = temp_dir.path().join("present");
+        fs::create_dir_all(&missing_dir).expect("missing dir should create");
+        fs::create_dir_all(&present_dir).expect("present dir should create");
+
+        let executable_name = FFMPEG_BINARY_NAMES[0];
+        let executable_path = present_dir.join(executable_name);
+        fs::write(&executable_path, b"stub").expect("stub executable should write");
+
+        let resolved = resolve_executable_in_dirs(&[missing_dir, present_dir], FFMPEG_BINARY_NAMES)
+            .expect("executable should resolve");
+
+        assert_eq!(resolved, executable_path);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn executable_relative_search_dirs_include_app_bundle_resources() {
+        let current_exe =
+            PathBuf::from("/Applications/RTSP Viewer.app/Contents/MacOS/rtsp_viewer_tauri");
+        let mut search_dirs = Vec::new();
+
+        append_executable_relative_search_dirs(&mut search_dirs, Some(&current_exe));
+
+        assert_eq!(
+            search_dirs,
+            vec![
+                PathBuf::from("/Applications/RTSP Viewer.app/Contents/MacOS"),
+                PathBuf::from("/Applications/RTSP Viewer.app/Contents/MacOS/bin"),
+                PathBuf::from("/Applications/RTSP Viewer.app/Contents/Resources"),
+                PathBuf::from("/Applications/RTSP Viewer.app/Contents/Resources/bin"),
+            ]
+        );
     }
 }

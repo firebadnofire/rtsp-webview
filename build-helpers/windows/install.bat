@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 
 set "SCRIPT_DIR=%~dp0"
-for %%I in ("%SCRIPT_DIR%..") do set "REPO_ROOT=%%~fI"
+for %%I in ("%SCRIPT_DIR%..\..") do set "REPO_ROOT=%%~fI"
 
 set "SOURCE_EXE=%REPO_ROOT%\dist\windows\rtsp-viewer.exe"
 set "INSTALL_DIR=%ProgramFiles%\rtsp-viewer"
@@ -15,7 +15,7 @@ if /i "%~1"=="--elevated" goto elevated
 if not exist "%SOURCE_EXE%" (
   echo ERROR: Built executable not found:
   echo   %SOURCE_EXE%
-  echo Run build-helpers\build-windows-exe.bat first.
+  echo Run build-helpers\windows\build-exe.bat first.
   exit /b 1
 )
 
@@ -50,7 +50,7 @@ if errorlevel 1 (
 if not exist "%SOURCE_EXE%" (
   echo ERROR: Built executable not found:
   echo   %SOURCE_EXE%
-  echo Run build-helpers\build-windows-exe.bat first.
+  echo Run build-helpers\windows\build-exe.bat first.
   exit /b 1
 )
 

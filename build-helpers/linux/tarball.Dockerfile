@@ -87,7 +87,7 @@ WORKDIR /out
 
 COPY --from=build /tmp/rtsp-viewer-version /tmp/rtsp-viewer-version
 COPY --from=build /work/LICENSE /tmp/LICENSE
-COPY --from=build /work/build-helpers/linux-runtime-notes.txt /tmp/README-linux.txt
+COPY --from=build /work/build-helpers/linux/runtime-notes.txt /tmp/README-linux.txt
 COPY --from=build /tmp/rtsp_viewer_tauri /tmp/rtsp_viewer_tauri
 
 RUN set -eux; \

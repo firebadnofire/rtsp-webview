@@ -133,7 +133,7 @@ After installation, close your terminal and open a new one so `node`, `npm`, `ca
 From the repository root, run:
 
 ```bat
-build-helpers\build-windows-exe.bat
+build-helpers\windows\build-exe.bat
 ```
 
 What this script does:
@@ -163,7 +163,7 @@ After the build finishes, run:
 If you want a machine-wide installation, run:
 
 ```bat
-build-helpers\install-windows.bat
+build-helpers\windows\install.bat
 ```
 
 What it does:
@@ -192,7 +192,7 @@ After installation, you can launch the app by:
 Run:
 
 ```bat
-build-helpers\uninstall-windows.bat
+build-helpers\windows\uninstall.bat
 ```
 
 That script requests administrator elevation, removes `C:\Program Files\rtsp-viewer`, and deletes the RTSP Viewer Start Menu and Desktop shortcuts if they exist.
@@ -268,7 +268,7 @@ That produces 32 panels across 8 screens.
 From the repository root:
 
 ```bash
-./build-helpers/build-linux-tarball.sh
+./build-helpers/linux/build-tarball.sh
 ```
 
 This builds the Docker-based Linux tarball and writes it under `dist/linux/`.
@@ -276,7 +276,7 @@ This builds the Docker-based Linux tarball and writes it under `dist/linux/`.
 To choose a different output directory:
 
 ```bash
-./build-helpers/build-linux-tarball.sh /absolute/path/to/output
+./build-helpers/linux/build-tarball.sh /absolute/path/to/output
 ```
 
 ## Cleaning Build Artifacts
@@ -284,16 +284,22 @@ To choose a different output directory:
 ### Windows
 
 ```bat
-build-helpers\clean.bat
+build-helpers\windows\clean.bat
 ```
 
-### Unix-style cleanup
+### macOS
 
 ```bash
-make clean
+./build-helpers/mac/clean.sh
 ```
 
-Both remove local build artifacts such as:
+### Linux
+
+```bash
+./build-helpers/linux/clean.sh
+```
+
+These helpers remove local build artifacts such as:
 
 - `target`
 - `dist`
@@ -304,4 +310,4 @@ Both remove local build artifacts such as:
 
 ## Helper Script Reference
 
-For a focused guide to the helper scripts, see [build-helpers/README.md](C:\Users\william\Desktop\git\rtsp-webview\build-helpers\README.md).
+For a focused guide to the helper scripts, see [build-helpers/README.md](build-helpers/README.md).

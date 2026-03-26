@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN gem install --no-document fpm -v 1.16.0
 
-COPY build-helpers/packaging /input/packaging
+COPY build-helpers/linux/packaging /input/packaging
 COPY src-tauri/icons/icon.png /input/icon.png
 COPY --from=linux_artifacts . /input/dist/linux/
 

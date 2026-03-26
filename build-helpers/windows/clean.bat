@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 
 set "SCRIPT_DIR=%~dp0"
-for %%I in ("%SCRIPT_DIR%..") do set "REPO_ROOT=%%~fI"
+for %%I in ("%SCRIPT_DIR%..\..") do set "REPO_ROOT=%%~fI"
 set "STATE_DIR=%REPO_ROOT%\.build-helpers-state"
 set "OUTPUT_REGISTRY=%STATE_DIR%\linux-tarball-output-dirs"
 set "BUILDER_NAME=%BUILDER_NAME%"

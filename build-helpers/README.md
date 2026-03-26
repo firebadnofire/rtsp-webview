@@ -2,6 +2,15 @@
 
 This directory contains helper scripts for building, installing, packaging, and cleaning the RTSP Viewer app.
 
+Current layout:
+
+```text
+build-helpers/
+├── linux/
+├── mac/
+└── windows/
+```
+
 ## Windows Helpers
 
 ### Download
@@ -15,7 +24,7 @@ git clone https://github.com/firebadnofire/rtsp-webview.git
 From the repository root, run:
 
 ```bat
-build-helpers\build-windows-exe.bat
+build-helpers\windows\build-exe.bat
 ```
 
 This script:
@@ -61,7 +70,7 @@ Recommended runtime dependency:
 After the build script has already produced `dist\windows\rtsp-viewer.exe`, run:
 
 ```bat
-build-helpers\install-windows.bat
+build-helpers\windows\install.bat
 ```
 
 Behavior:
@@ -77,7 +86,7 @@ Behavior:
 To remove the machine-wide installation, run:
 
 ```bat
-build-helpers\uninstall-windows.bat
+build-helpers\windows\uninstall.bat
 ```
 
 Behavior:
@@ -91,7 +100,7 @@ Behavior:
 To remove local Windows build output, run:
 
 ```bat
-build-helpers\clean.bat
+build-helpers\windows\clean.bat
 ```
 
 Removes generated local build output and helper state.
@@ -101,7 +110,7 @@ Removes generated local build output and helper state.
 From the repository root, run:
 
 ```bash
-./build-helpers/build-linux-tarball.sh
+./build-helpers/linux/build-tarball.sh
 ```
 
 This repository includes a Docker-based Linux build pipeline for the Tauri desktop app.
@@ -111,13 +120,13 @@ By default it exports a `linux/amd64` tarball to `dist/linux/`.
 To change the output directory:
 
 ```bash
-./build-helpers/build-linux-tarball.sh /absolute/path/to/output
+./build-helpers/linux/build-tarball.sh /absolute/path/to/output
 ```
 
 To build a different architecture:
 
 ```bash
-BUILD_PLATFORM=linux/arm64 ./build-helpers/build-linux-tarball.sh
+BUILD_PLATFORM=linux/arm64 ./build-helpers/linux/build-tarball.sh
 ```
 
 The exported tarball is named like:
@@ -133,7 +142,7 @@ The tarball includes the compiled binary, the project license, and Linux runtime
 On macOS, from the repository root, run:
 
 ```bash
-./build-helpers/build-macos-app.sh
+./build-helpers/mac/build-app.sh
 ```
 
 This script exits immediately on non-macOS systems.
@@ -153,6 +162,12 @@ Output:
 dist/macos/RTSP Viewer.app
 ```
 
+Runtime note:
+
+- streaming still requires `ffmpeg`
+- the macOS app now searches `PATH`, the app bundle directories, `/opt/homebrew/bin`, `/usr/local/bin`, and `/opt/local/bin`
+- if `ffmpeg` is installed elsewhere, launch with `RTSP_VIEWER_FFMPEG=/absolute/path/to/ffmpeg`
+
 Required tools:
 
 - `node`
@@ -171,7 +186,7 @@ Optional tools for a custom Finder icon:
 After `dist/linux/rtsp-viewer-*.tar.gz` already exists, run:
 
 ```bash
-./build-helpers/build-linux-package.sh
+./build-helpers/linux/build-package.sh
 ```
 
 The script refuses to run if `dist/linux` does not contain a tarball.
@@ -199,10 +214,10 @@ The single `rpm` option builds both RPM variants into `dist/linux/packages/rpm/`
 You can also skip the prompt and pass the target directly:
 
 ```bash
-./build-helpers/build-linux-package.sh deb
-./build-helpers/build-linux-package.sh rpm
-./build-helpers/build-linux-package.sh arch
-./build-helpers/build-linux-package.sh appimage
+./build-helpers/linux/build-package.sh deb
+./build-helpers/linux/build-package.sh rpm
+./build-helpers/linux/build-package.sh arch
+./build-helpers/linux/build-package.sh appimage
 ```
 
 ## Alpine / musl Status
@@ -213,10 +228,20 @@ The current desktop stack is Tauri 1 / WRY 0.24 / `webkit2gtk` 0.18, and that de
 
 ## Unix-Style Clean
 
+### macOS
+
 From the repository root, run:
 
 ```bash
-make clean
+./build-helpers/mac/clean.sh
 ```
 
-This removes the same local build artifacts as the Windows cleaner and also tears down the Docker Buildx builder used by the Linux tarball pipeline when Docker is available.
+### Linux
+
+From the repository root, run:
+
+```bash
+./build-helpers/linux/clean.sh
+```
+
+Both Unix helpers remove the same local build artifacts as the Windows cleaner. The macOS helper delegates to the shared Unix cleanup routine, and the Linux helper also tears down the Docker Buildx builder used by the Linux tarball pipeline when Docker is available.

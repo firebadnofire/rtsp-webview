@@ -3,11 +3,11 @@
 set -euo pipefail
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-    printf 'ERROR: build-macos-app.sh only runs on macOS.\n' >&2
+    printf 'ERROR: build-app.sh only runs on macOS.\n' >&2
     exit 1
 fi
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 UI_DIR="${ROOT_DIR}/ui"
 TAURI_CONFIG="${ROOT_DIR}/src-tauri/tauri.conf.json"
 ICON_SOURCE="${ROOT_DIR}/src-tauri/icons/icon.png"

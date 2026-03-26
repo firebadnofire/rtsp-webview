@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DOCKERFILE="${ROOT_DIR}/build-helpers/linux-packages.Dockerfile"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+DOCKERFILE="${ROOT_DIR}/build-helpers/linux/packages.Dockerfile"
 ARTIFACT_DIR="${ROOT_DIR}/dist/linux"
 OUTPUT_BASE_DIR="${ROOT_DIR}/dist/linux/packages"
 BUILDER_NAME="${BUILDER_NAME:-rtsp-webview-linux-builder}"
@@ -59,7 +59,7 @@ find_latest_tarball() {
     shopt -u nullglob
 
     if [[ ${#tarballs[@]} -eq 0 ]]; then
-        fail "no Linux tarball found in ${ARTIFACT_DIR}; build one first with ./build-helpers/build-linux-tarball.sh"
+        fail "no Linux tarball found in ${ARTIFACT_DIR}; build one first with ./build-helpers/linux/build-tarball.sh"
     fi
 
     ls -t "${tarballs[@]}" | head -n 1

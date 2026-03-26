@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DOCKERFILE="${ROOT_DIR}/build-helpers/linux-tarball.Dockerfile"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+DOCKERFILE="${ROOT_DIR}/build-helpers/linux/tarball.Dockerfile"
 STATE_DIR="${ROOT_DIR}/.build-helpers-state"
 OUTPUT_REGISTRY="${STATE_DIR}/linux-tarball-output-dirs"
 BUILD_PLATFORM="${BUILD_PLATFORM:-linux/amd64}"

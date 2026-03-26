@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STATE_DIR="${ROOT_DIR}/.build-helpers-state"
 OUTPUT_REGISTRY="${STATE_DIR}/linux-tarball-output-dirs"
 BUILDER_NAME="${BUILDER_NAME:-rtsp-webview-linux-builder}"
