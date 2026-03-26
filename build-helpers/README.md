@@ -128,6 +128,51 @@ rtsp-viewer-0.1.0-linux-x86_64.tar.gz
 
 The tarball includes the compiled binary, the project license, and Linux runtime notes.
 
+## Linux Package Helper
+
+After `dist/linux/rtsp-viewer-*.tar.gz` already exists, run:
+
+```bash
+./build-helpers/build-linux-package.sh
+```
+
+The script refuses to run if `dist/linux` does not contain a tarball.
+
+It presents an interactive numbered menu and then uses Docker to turn the existing tarball into one of:
+
+- `.deb`
+- `.rpm` packages
+- Arch `.pkg.tar.zst`
+- `.AppImage`
+
+Artifacts are exported to:
+
+```text
+dist/linux/packages/
+```
+
+The packaging containers default to the host's native Linux platform. The package architecture still comes from the tarball name itself, so an `x86_64` tarball still produces `x86_64` packages when the helper runs on Apple Silicon.
+
+The single `rpm` option builds both RPM variants into `dist/linux/packages/rpm/`:
+
+- an `el9` RPM for RHEL-style systems
+- an `opensuse` RPM for zypper/openSUSE-style systems
+
+You can also skip the prompt and pass the target directly:
+
+```bash
+./build-helpers/build-linux-package.sh deb
+./build-helpers/build-linux-package.sh rpm
+./build-helpers/build-linux-package.sh arch
+./build-helpers/build-linux-package.sh appimage
+```
+
+## Alpine / musl Status
+
+This repository does not currently ship an Alpine/musl build helper.
+
+The current desktop stack is Tauri 1 / WRY 0.24 / `webkit2gtk` 0.18, and that dependency chain expects the `webkit2gtk-4.0` system package. Alpine currently exposes `webkit2gtk-4.1` instead, so a reliable musl build path would require a dependency-stack upgrade rather than just another packaging script.
+
 ## Unix-Style Clean
 
 From the repository root, run:
