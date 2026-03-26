@@ -104,6 +104,11 @@ EOF
 map_architecture() {
     local arch="$1"
 
+    deb_arch=""
+    rpm_arch=""
+    pacman_arch=""
+    appimage_arch=""
+
     case "${arch}" in
         x86_64)
             deb_arch="amd64"
@@ -117,10 +122,30 @@ map_architecture() {
             pacman_arch="aarch64"
             appimage_arch="aarch64"
             ;;
+        armv7|armv7l)
+            deb_arch="armhf"
+            rpm_arch="armv7hl"
+            pacman_arch="armv7h"
+            ;;
+        ppc64le)
+            deb_arch="ppc64el"
+            rpm_arch="ppc64le"
+            ;;
+        s390x)
+            deb_arch="s390x"
+            rpm_arch="s390x"
+            ;;
         *)
             fail "unsupported tarball architecture '${arch}'"
             ;;
     esac
+}
+
+require_supported_architecture() {
+    local package_label="$1"
+    local mapped_arch="$2"
+
+    [[ -n "${mapped_arch}" ]] || fail "${package_label} packaging is not supported for tarball architecture '${linux_arch}'"
 }
 
 build_fpm_package() {
@@ -228,6 +253,7 @@ prepare_stage_tree "${stage_root}"
 
 case "${PACKAGE_TARGET}" in
     deb)
+        require_supported_architecture '.deb' "${deb_arch}"
         build_fpm_package \
             deb \
             "${deb_arch}" \
@@ -238,6 +264,7 @@ case "${PACKAGE_TARGET}" in
             --depends libayatana-appindicator3-1
         ;;
     rpm-rhel)
+        require_supported_architecture 'RPM' "${rpm_arch}"
         build_fpm_package \
             rpm \
             "${rpm_arch}" \
@@ -250,6 +277,7 @@ case "${PACKAGE_TARGET}" in
             --depends libappindicator-gtk3
         ;;
     rpm-zypper)
+        require_supported_architecture 'RPM' "${rpm_arch}"
         build_fpm_package \
             rpm \
             "${rpm_arch}" \
@@ -262,6 +290,7 @@ case "${PACKAGE_TARGET}" in
             --depends libappindicator3-1
         ;;
     arch)
+        require_supported_architecture 'pacman' "${pacman_arch}"
         build_fpm_package \
             pacman \
             "${pacman_arch}" \
@@ -273,6 +302,7 @@ case "${PACKAGE_TARGET}" in
             --depends libappindicator-gtk3
         ;;
     appimage)
+        require_supported_architecture 'AppImage' "${appimage_arch}"
         build_appimage "${appimage_arch}"
         ;;
     *)

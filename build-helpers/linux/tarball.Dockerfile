@@ -2,12 +2,20 @@
 
 FROM node:20-bullseye AS toolchain
 
+ARG APT_HTTP_PROXY=""
+
 ENV DEBIAN_FRONTEND=noninteractive \
     RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:${PATH}
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    if [ -n "${APT_HTTP_PROXY}" ]; then \
+        printf 'Acquire::http::Proxy "%s";\n' "${APT_HTTP_PROXY}" > /etc/apt/apt.conf.d/01proxy; \
+    else \
+        rm -f /etc/apt/apt.conf.d/01proxy; \
+    fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
@@ -82,6 +90,7 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 FROM debian:bullseye-slim AS package
 
 ARG TARGETARCH
+ARG TARGETVARIANT
 
 WORKDIR /out
 
@@ -95,7 +104,15 @@ RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
         amd64) arch="x86_64" ;; \
         arm64) arch="aarch64" ;; \
-        *) arch="${TARGETARCH:-unknown}" ;; \
+        arm) \
+            case "${TARGETVARIANT:-}" in \
+                v7) arch="armv7" ;; \
+                *) arch="${TARGETARCH:-unknown}${TARGETVARIANT:+-${TARGETVARIANT}}" ;; \
+            esac \
+            ;; \
+        ppc64le) arch="ppc64le" ;; \
+        s390x) arch="s390x" ;; \
+        *) arch="${TARGETARCH:-unknown}${TARGETVARIANT:+-${TARGETVARIANT}}" ;; \
     esac; \
     package_dir="/tmp/rtsp-viewer-${version}-linux-${arch}"; \
     mkdir -p "${package_dir}"; \

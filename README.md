@@ -121,6 +121,8 @@ winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsof
 winget install Rustlang.Rustup
 rustup default stable
 rustup target add x86_64-pc-windows-msvc
+rustup target add i686-pc-windows-msvc
+rustup target add aarch64-pc-windows-msvc
 
 # NodeJS
 winget install OpenJS.NodeJS.LTS
@@ -136,13 +138,26 @@ From the repository root, run:
 build-helpers\windows\build-exe.bat
 ```
 
+The helper presents a numbered architecture menu before building:
+
+1. `AMD64`
+2. `x86`
+3. `AARCH64`
+
+To skip the prompt, you can also run:
+
+```bat
+build-helpers\windows\build-exe.bat aarch64
+```
+
 What this script does:
 
 1. checks that `node`, `npm`, `cargo`, and `rustup` are installed
-2. runs `npm ci` in `ui`
-3. builds the frontend bundle
-4. builds the Rust/Tauri app in release mode
-5. copies the final executable to `dist\windows\rtsp-viewer.exe`
+2. verifies the selected Rust target is installed
+3. runs `npm ci` in `ui`
+4. builds the frontend bundle
+5. builds the Rust/Tauri app in release mode for the selected architecture
+6. copies the final executable to `dist\windows\rtsp-viewer.exe`
 
 Expected build output:
 
@@ -273,10 +288,24 @@ From the repository root:
 
 This builds the Docker-based Linux tarball and writes it under `dist/linux/`.
 
+When run interactively, it shows a numbered architecture menu before the Docker build starts:
+
+1. `linux/amd64` (`x86_64`)
+2. `linux/arm64` (`aarch64`)
+3. `linux/arm/v7` (`armv7`)
+4. `linux/ppc64le`
+5. `linux/s390x`
+
 To choose a different output directory:
 
 ```bash
 ./build-helpers/linux/build-tarball.sh /absolute/path/to/output
+```
+
+To skip the prompt and set the architecture directly:
+
+```bash
+BUILD_PLATFORM=linux/arm64 ./build-helpers/linux/build-tarball.sh
 ```
 
 ## Cleaning Build Artifacts

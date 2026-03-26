@@ -2,9 +2,17 @@
 
 FROM debian:bookworm-slim AS package-common
 
+ARG APT_HTTP_PROXY=""
+
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    if [ -n "${APT_HTTP_PROXY}" ]; then \
+        printf 'Acquire::http::Proxy "%s";\n' "${APT_HTTP_PROXY}" > /etc/apt/apt.conf.d/01proxy; \
+    else \
+        rm -f /etc/apt/apt.conf.d/01proxy; \
+    fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
     bash \
     binutils \
     ca-certificates \

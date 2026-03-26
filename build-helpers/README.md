@@ -27,16 +27,35 @@ From the repository root, run:
 build-helpers\windows\build-exe.bat
 ```
 
+The script presents a numbered architecture menu before building:
+
+1. `AMD64`
+2. `x86`
+3. `AARCH64`
+
+To skip the prompt, pass the architecture directly:
+
+```bat
+build-helpers\windows\build-exe.bat aarch64
+```
+
 This script:
 
 1. checks that `node`, `npm`, `cargo`, and `rustup` are installed
-2. runs `npm ci` in `ui`
-3. builds the frontend bundle
-4. compiles the release Tauri app
-5. copies the final executable to:
+2. verifies the selected Rust target is installed
+3. runs `npm ci` in `ui`
+4. builds the frontend bundle
+5. compiles the release Tauri app for the selected architecture
+6. copies the final executable to:
 
 ```text
 dist\windows\rtsp-viewer.exe
+```
+
+It also keeps an architecture-specific copy under:
+
+```text
+dist\windows\<architecture>\rtsp-viewer.exe
 ```
 
 Required Windows programs can be installed with:
@@ -49,6 +68,8 @@ winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsof
 winget install Rustlang.Rustup
 rustup default stable
 rustup target add x86_64-pc-windows-msvc
+rustup target add i686-pc-windows-msvc
+rustup target add aarch64-pc-windows-msvc
 
 # NodeJS
 winget install OpenJS.NodeJS.LTS
@@ -115,7 +136,17 @@ From the repository root, run:
 
 This repository includes a Docker-based Linux build pipeline for the Tauri desktop app.
 
-By default it exports a `linux/amd64` tarball to `dist/linux/`.
+In non-interactive runs, it falls back to the current machine's native Linux architecture when recognized, otherwise `linux/amd64`.
+
+Before building, the helper creates or reuses the external Docker network `build-system`, probes `http://apt-cacher-ng:3142`, and only passes an APT proxy into the Docker build when that cache is reachable. The temporary `buildx` builder is removed automatically when the script exits, so it does not sit idle afterward.
+
+When run interactively, the helper now shows a numbered architecture menu before the Docker build starts:
+
+1. `linux/amd64` (`x86_64`)
+2. `linux/arm64` (`aarch64`)
+3. `linux/arm/v7` (`armv7`)
+4. `linux/ppc64le`
+5. `linux/s390x`
 
 To change the output directory:
 
@@ -123,7 +154,7 @@ To change the output directory:
 ./build-helpers/linux/build-tarball.sh /absolute/path/to/output
 ```
 
-To build a different architecture:
+To skip the prompt and build a specific architecture directly:
 
 ```bash
 BUILD_PLATFORM=linux/arm64 ./build-helpers/linux/build-tarball.sh
@@ -146,6 +177,8 @@ On macOS, from the repository root, run:
 ```
 
 This script exits immediately on non-macOS systems.
+
+It intentionally builds for the current macOS machine architecture and does not present a target-selection prompt.
 
 It uses the current machine's native macOS tooling to:
 
@@ -191,7 +224,11 @@ After `dist/linux/rtsp-viewer-*.tar.gz` already exists, run:
 
 The script refuses to run if `dist/linux` does not contain a tarball.
 
-It presents an interactive numbered menu and then uses Docker to turn the existing tarball into one of:
+It first presents an interactive numbered architecture menu to choose which tarball to package, then presents the package-format menu for that architecture.
+
+Like the tarball helper, it creates or reuses the external Docker network `build-system`, probes `http://apt-cacher-ng:3142`, and only enables an APT proxy when that cache is reachable. Its temporary `buildx` builder is removed automatically when the script exits.
+
+The package menu can build one of:
 
 - `.deb`
 - `.rpm` packages
@@ -206,18 +243,24 @@ dist/linux/packages/
 
 The packaging containers default to the host's native Linux platform. The package architecture still comes from the tarball name itself, so an `x86_64` tarball still produces `x86_64` packages when the helper runs on Apple Silicon.
 
+Tarball architecture support by package format currently looks like this:
+
+- `x86_64` and `aarch64`: `.deb`, RPM, Arch package, and AppImage
+- `armv7`: `.deb`, RPM, and Arch package
+- `ppc64le` and `s390x`: `.deb` and RPM
+
 The single `rpm` option builds both RPM variants into `dist/linux/packages/rpm/`:
 
 - an `el9` RPM for RHEL-style systems
 - an `opensuse` RPM for zypper/openSUSE-style systems
 
-You can also skip the prompt and pass the target directly:
+You can also skip one or both prompts and pass text tokens directly, with architecture first and package format second:
 
 ```bash
-./build-helpers/linux/build-package.sh deb
-./build-helpers/linux/build-package.sh rpm
-./build-helpers/linux/build-package.sh arch
-./build-helpers/linux/build-package.sh appimage
+./build-helpers/linux/build-package.sh aarch64 deb
+./build-helpers/linux/build-package.sh x86_64 rpm
+./build-helpers/linux/build-package.sh armv7 arch
+./build-helpers/linux/build-package.sh ppc64le deb
 ```
 
 ## Alpine / musl Status
@@ -244,4 +287,4 @@ From the repository root, run:
 ./build-helpers/linux/clean.sh
 ```
 
-Both Unix helpers remove the same local build artifacts as the Windows cleaner. The macOS helper delegates to the shared Unix cleanup routine, and the Linux helper also tears down the Docker Buildx builder used by the Linux tarball pipeline when Docker is available.
+Both Unix helpers remove the same local build artifacts as the Windows cleaner. The macOS helper delegates to the shared Unix cleanup routine, and the Linux helper also removes the Linux Docker builder state and the `build-system` network when Docker is available.

@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STATE_DIR="${ROOT_DIR}/.build-helpers-state"
 OUTPUT_REGISTRY="${STATE_DIR}/linux-tarball-output-dirs"
 BUILDER_NAME="${BUILDER_NAME:-rtsp-webview-linux-builder}"
+BUILD_NETWORK_NAME="${BUILD_NETWORK_NAME:-build-system}"
 
 static_paths_to_clean=(
     "${ROOT_DIR}/target"
@@ -173,6 +174,10 @@ done
 if command -v docker >/dev/null 2>&1 && docker buildx inspect "${BUILDER_NAME}" >/dev/null 2>&1; then
     docker buildx prune --builder "${BUILDER_NAME}" --all --force >/dev/null 2>&1 || true
     docker buildx rm --force "${BUILDER_NAME}" >/dev/null 2>&1 || true
+fi
+
+if command -v docker >/dev/null 2>&1 && docker network inspect "${BUILD_NETWORK_NAME}" >/dev/null 2>&1; then
+    docker network rm "${BUILD_NETWORK_NAME}" >/dev/null 2>&1 || true
 fi
 
 echo "$(format_kib "${total_kib}") removed"
