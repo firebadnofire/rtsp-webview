@@ -1,6 +1,25 @@
 # RTSP Viewer
 
-`rtsp-webview` is a Rust + Tauri desktop RTSP viewer with a WebView-based UI.
+# Why?
+
+RTSP Viewer was born when I decided Lorex is bad at making software for desktops and browsers. 
+
+My (D841 series)[https://www.lorex.com/blogs/products/d441-series] DVR exposes an RTSP stream on it's LAN IP, so realizing the Lorex desktop app is both terrible and Windows only, I looked for alternatives on RTSP. Unfortunately, I never found a good one for multiple cameras. So that's what I made.
+
+Originally, this was made as a (proof of concept in Python)[https://codeberg.org/firebadnofire/rtsp-client.git]. Eventually I grew tired with both python's limitations and the UI of the program itself. So I started over with this project in Rust with Webview.
+
+# Features
+
+`rtsp-webview` is a Rust desktop RTSP viewer with a WebView-based UI.
+
+<details>
+<summary>Program UI</summary>
+
+![UI demo 1](img/uidemo1.png)
+![UI demo 2](img/uidemo2.png)
+![UI demo 3](img/uidemo3.png)
+
+</details>
 
 The current app supports:
 
