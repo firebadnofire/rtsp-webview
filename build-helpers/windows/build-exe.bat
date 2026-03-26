@@ -41,12 +41,7 @@ if errorlevel 1 (
 )
 
 echo [2/5] Checking Rust target...
-rustup target list --installed | findstr /I /X /C:"%RUST_TARGET%" >nul
-if errorlevel 1 (
-  echo ERROR: Rust target %RUST_TARGET% is not installed.
-  echo Install it with: rustup target add %RUST_TARGET%
-  exit /b 1
-)
+rustup target add %RUST_TARGET% >nul 2>&1
 
 echo [3/5] Installing frontend dependencies...
 pushd "%UI_DIR%" >nul
