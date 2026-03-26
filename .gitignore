@@ -5,9 +5,11 @@
 /ui/dist/
 /ui/node_modules/
 /ui/.vite/
+/ui/node_modules/.vite-temp/
 /ui/*.tsbuildinfo
 /ui/coverage/
 /coverage/
+/dist/windows/
 
 # Runtime-generated local config
 /rtsp_viewer_config.json
@@ -24,6 +26,9 @@
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+*.ilk
+*.exp
+*.lib
 
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

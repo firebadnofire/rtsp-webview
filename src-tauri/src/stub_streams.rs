@@ -24,6 +24,8 @@ const STARTUP_KEYFRAME_MESSAGE: &str = "Waiting for initial keyframe";
 const PREVIEW_MAX_WIDTH: u32 = 2560;
 const PREVIEW_MAX_HEIGHT: u32 = 1440;
 const PREVIEW_JPEG_QUALITY: u8 = 4;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub async fn ensure_started(
     app: AppHandle,
@@ -249,7 +251,8 @@ fn spawn_ffmpeg_process(
 ) -> Result<(Child, ChildStdout, JoinHandle<String>), CommandError> {
     let preview_filter = build_preview_filter(preview_fps);
     let jpeg_quality = PREVIEW_JPEG_QUALITY;
-    let mut child = Command::new("ffmpeg")
+    let mut command = Command::new("ffmpeg");
+    command
         .arg("-nostdin")
         .arg("-v")
         .arg("error")
@@ -278,7 +281,11 @@ fn spawn_ffmpeg_process(
         .arg("-")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    configure_background_process(&mut command);
+
+    let mut child = command
         .spawn()
         .map_err(|error| CommandError::decode(format!("failed to run ffmpeg: {}", error)))?;
 
@@ -299,6 +306,14 @@ fn spawn_ffmpeg_process(
 
     Ok((child, stdout, stderr_task))
 }
+
+#[cfg(windows)]
+fn configure_background_process(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_background_process(_command: &mut Command) {}
 
 fn build_preview_filter(preview_fps: u8) -> String {
     format!(

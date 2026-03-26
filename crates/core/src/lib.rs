@@ -175,6 +175,8 @@ pub struct PanelConfig {
     pub sub_num: Option<u32>,
     pub transport: Transport,
     pub latency_ms: u32,
+    #[serde(default)]
+    pub start_on_load: bool,
     pub secret_ref: SecretRef,
     #[serde(default)]
     pub advanced: AdvancedConfig,
@@ -346,6 +348,7 @@ pub fn default_panel_config(screen_id: u32, panel_id: u8) -> PanelConfig {
         sub_num: None,
         transport: Transport::Tcp,
         latency_ms: 200,
+        start_on_load: false,
         secret_ref: SecretRef {
             key: secret_key_for(screen_id, panel_id),
         },
@@ -767,6 +770,67 @@ mod tests {
         assert_eq!(parsed.stream_defaults.preview_fps, DEFAULT_PREVIEW_FPS);
         assert!(!parsed.stream_defaults.auto_manage_preview_fps);
         assert!(parsed.saved_secrets.is_empty());
+    }
+
+    #[test]
+    fn legacy_config_defaults_panel_start_on_load_to_false() {
+        let parsed: AppConfig = serde_json::from_str(
+            r#"{
+                "schema_version": 2,
+                "screens": [{
+                    "id": 0,
+                    "panels": [{
+                        "title": "Camera 1",
+                        "host": "127.0.0.1",
+                        "port": 554,
+                        "path": "stream",
+                        "channel": null,
+                        "subtype": null,
+                        "transport": "tcp",
+                        "latency_ms": 200,
+                        "secret_ref": { "key": "screen_0_panel_0" }
+                    }, {
+                        "title": "",
+                        "host": "",
+                        "port": 554,
+                        "path": "",
+                        "channel": null,
+                        "subtype": null,
+                        "transport": "tcp",
+                        "latency_ms": 200,
+                        "secret_ref": { "key": "screen_0_panel_1" }
+                    }, {
+                        "title": "",
+                        "host": "",
+                        "port": 554,
+                        "path": "",
+                        "channel": null,
+                        "subtype": null,
+                        "transport": "tcp",
+                        "latency_ms": 200,
+                        "secret_ref": { "key": "screen_0_panel_2" }
+                    }, {
+                        "title": "",
+                        "host": "",
+                        "port": 554,
+                        "path": "",
+                        "channel": null,
+                        "subtype": null,
+                        "transport": "tcp",
+                        "latency_ms": 200,
+                        "secret_ref": { "key": "screen_0_panel_3" }
+                    }]
+                }],
+                "ui_state": {
+                    "active_screen": 0,
+                    "active_panel_per_screen": [0],
+                    "fullscreen": false
+                }
+            }"#,
+        )
+        .expect("legacy config should deserialize");
+
+        assert!(!parsed.screens[0].panels[0].start_on_load);
     }
 
     #[test]

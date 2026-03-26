@@ -171,6 +171,9 @@ export class RtspViewerApp {
   private frameFlushScheduled = false
   private decodedFrames = new Map<string, { seq: number; url: string }>()
   private pendingFrameDecodes = new Map<string, { seq: number; url: string }>()
+  private pendingFocusRestoreTimer: number | null = null
+  private pendingRenderTimer: number | null = null
+  private pendingRenderState: UiStoreState | null = null
 
   constructor(root: HTMLElement, deps: AppDeps) {
     this.root = root
@@ -179,7 +182,7 @@ export class RtspViewerApp {
 
   async start(): Promise<void> {
     this.unsubscribeStore = this.store.subscribe((state) => {
-      this.render(state)
+      this.scheduleRender(state)
     })
     this.unsubscribeFrames = this.store.subscribeFrames(() => {
       this.scheduleVisibleFrameFlush()
@@ -241,6 +244,8 @@ export class RtspViewerApp {
     }
     this.decodedFrames.clear()
     this.pendingFrameDecodes.clear()
+    this.clearPendingFocusRestore()
+    this.clearPendingRender()
   }
 
   private readonly handleKeydown = async (event: KeyboardEvent): Promise<void> => {
@@ -387,6 +392,7 @@ export class RtspViewerApp {
 
     const screenId = Number(target.dataset.screenId)
     const panelId = Number(target.dataset.panelId)
+    const originalTarget = event.target
 
     if (action === 'dismiss-notice') {
       const id = Number(target.dataset.id)
@@ -398,7 +404,6 @@ export class RtspViewerApp {
 
     if (action === 'close-modal') {
       if (target.classList.contains('modal-backdrop')) {
-        const originalTarget = event.target
         if (originalTarget instanceof HTMLElement && originalTarget.closest('.modal')) {
           return
         }
@@ -409,12 +414,19 @@ export class RtspViewerApp {
 
     if (action === 'close-app-settings') {
       if (target.classList.contains('modal-backdrop')) {
-        const originalTarget = event.target
         if (originalTarget instanceof HTMLElement && originalTarget.closest('.modal')) {
           return
         }
       }
       this.store.closeAppSettingsModal()
+      return
+    }
+
+    if (
+      action === 'select-panel' &&
+      originalTarget instanceof HTMLElement &&
+      originalTarget.closest('select, option, input, textarea, label')
+    ) {
       return
     }
 
@@ -1013,6 +1025,69 @@ export class RtspViewerApp {
     if (!snapshot) {
       return
     }
+    this.clearPendingFocusRestore()
+    this.applyFocusSnapshot(snapshot)
+
+    const schedule = typeof window.requestAnimationFrame === 'function'
+      ? window.requestAnimationFrame.bind(window)
+      : (callback: FrameRequestCallback): number => window.setTimeout(() => callback(Date.now()), 0)
+
+    this.pendingFocusRestoreTimer = schedule(() => {
+      this.pendingFocusRestoreTimer = null
+      this.applyFocusSnapshot(snapshot)
+    })
+  }
+
+  private clearPendingFocusRestore(): void {
+    if (this.pendingFocusRestoreTimer === null) {
+      return
+    }
+
+    if (typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(this.pendingFocusRestoreTimer)
+    } else {
+      window.clearTimeout(this.pendingFocusRestoreTimer)
+    }
+    this.pendingFocusRestoreTimer = null
+  }
+
+  private scheduleRender(state: UiStoreState): void {
+    this.pendingRenderState = state
+    if (this.pendingRenderTimer !== null) {
+      return
+    }
+
+    const schedule =
+      typeof window.requestAnimationFrame === 'function'
+        ? window.requestAnimationFrame.bind(window)
+        : (callback: FrameRequestCallback): number => window.setTimeout(() => callback(Date.now()), 0)
+
+    this.pendingRenderTimer = schedule(() => {
+      const nextState = this.pendingRenderState
+      this.pendingRenderTimer = null
+      this.pendingRenderState = null
+      if (nextState) {
+        this.render(nextState)
+      }
+    })
+  }
+
+  private clearPendingRender(): void {
+    if (this.pendingRenderTimer === null) {
+      this.pendingRenderState = null
+      return
+    }
+
+    if (typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(this.pendingRenderTimer)
+    } else {
+      window.clearTimeout(this.pendingRenderTimer)
+    }
+    this.pendingRenderTimer = null
+    this.pendingRenderState = null
+  }
+
+  private applyFocusSnapshot(snapshot: FocusSnapshot): void {
     const target = this.root.querySelector(snapshot.selector)
     if (
       !(target instanceof HTMLInputElement) &&

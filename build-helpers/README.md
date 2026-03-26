@@ -35,3 +35,38 @@ rtsp-viewer-0.1.0-linux-x86_64.tar.gz
 ```
 
 The tarball contains the compiled `rtsp_viewer_tauri` binary, the project license, and Linux runtime notes.
+
+## Windows executable helper
+
+Run the Windows batch file from the repository root:
+
+```bat
+build-helpers\build-windows-exe.bat
+```
+
+It builds the frontend, compiles the release Rust binary, and copies the deliverable to:
+
+```text
+dist\windows\rtsp-viewer.exe
+```
+
+Required Windows programs:
+
+- Node.js LTS with npm
+- rustup plus the stable MSVC Rust toolchain
+- Visual Studio 2022 Build Tools with Desktop development with C++
+- Windows SDK installed through Visual Studio Build Tools
+
+Recommended runtime dependency:
+
+- Microsoft Edge WebView2 Runtime
+
+## Windows clean helper
+
+Run the batch file from the repository root:
+
+```bat
+build-helpers\clean.bat
+```
+
+It removes the same local build artifacts as `make clean` and also tears down the optional Docker Buildx builder used by the Linux tarball pipeline when Docker is available.

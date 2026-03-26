@@ -207,7 +207,12 @@ impl AppRuntimeState {
                 .iter()
                 .map(|screen| rtsp_core::ScreenConfig {
                     id: screen.id,
-                    panels: array::from_fn(|panel_idx| screen.panels[panel_idx].config.clone()),
+                    panels: array::from_fn(|panel_idx| {
+                        let mut config = screen.panels[panel_idx].config.clone();
+                        config.start_on_load =
+                            is_active_stream_state(screen.panels[panel_idx].status.state);
+                        config
+                    }),
                 })
                 .collect::<Vec<_>>(),
             ui_state: rtsp_core::UiState {
@@ -577,7 +582,7 @@ impl AppRuntimeState {
     ) -> Result<LoadMergeOutcome, CommandError> {
         validate_app_config(&loaded)?;
 
-        let mut previous_playing: HashMap<PanelKey, (ConnectionTuple, u8)> = HashMap::new();
+        let mut previous_active: HashMap<PanelKey, (ConnectionTuple, u8)> = HashMap::new();
         let previous_active_stream_count = self.active_stream_count();
 
         for screen in &self.screens {
@@ -587,8 +592,8 @@ impl AppRuntimeState {
                     panel_id: panel_idx as u8,
                 };
                 let panel = &screen.panels[panel_idx];
-                if panel.status.state == PanelState::Playing {
-                    previous_playing.insert(
+                if is_active_stream_state(panel.status.state) {
+                    previous_active.insert(
                         key,
                         (
                             connection_tuple(
@@ -609,13 +614,30 @@ impl AppRuntimeState {
 
         let mut stop_keys = Vec::new();
         let mut restart_keys = Vec::new();
-        let next_active_stream_count = previous_playing
-            .keys()
+        let desired_active_keys = new_runtime
+            .screens
+            .iter()
+            .flat_map(|screen| {
+                screen.panels.iter().enumerate().filter_map(move |(panel_idx, panel)| {
+                    panel.config.start_on_load.then_some(PanelKey {
+                        screen_id: screen.id,
+                        panel_id: panel_idx as u8,
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        let next_active_stream_count = desired_active_keys
+            .iter()
             .filter(|key| new_runtime.panel_exists(**key))
             .count();
 
-        for (key, (old_tuple, old_preview_fps)) in &previous_playing {
+        for (key, (old_tuple, old_preview_fps)) in &previous_active {
             if !new_runtime.panel_exists(*key) {
+                stop_keys.push(*key);
+                continue;
+            }
+
+            if !new_runtime.get_panel(*key)?.config.start_on_load {
                 stop_keys.push(*key);
                 continue;
             }
@@ -629,6 +651,12 @@ impl AppRuntimeState {
             } else {
                 stop_keys.push(*key);
                 restart_keys.push(*key);
+            }
+        }
+
+        for key in desired_active_keys {
+            if !previous_active.contains_key(&key) {
+                restart_keys.push(key);
             }
         }
 
@@ -938,7 +966,8 @@ mod tests {
             .set_panel_status(key, PanelState::Playing, "Playing", None)
             .expect("set status should work");
 
-        let loaded = runtime.to_app_config();
+        let mut loaded = runtime.to_app_config();
+        loaded.screens[0].panels[0].start_on_load = true;
         let outcome = runtime
             .merge_loaded_config(loaded, HashMap::new())
             .expect("merge should work");
@@ -948,6 +977,53 @@ mod tests {
             runtime.screens[0].panels[0].status.state,
             PanelState::Playing
         );
+    }
+
+    #[test]
+    fn to_app_config_marks_active_panels_for_start_on_load() {
+        let mut runtime = runtime_with_screens(1);
+        let key = PanelKey {
+            screen_id: 0,
+            panel_id: 0,
+        };
+
+        runtime
+            .set_panel_status(key, PanelState::Retrying, "Retrying", None)
+            .expect("status should set");
+
+        let config = runtime.to_app_config();
+        assert!(config.screens[0].panels[0].start_on_load);
+        assert!(!config.screens[0].panels[1].start_on_load);
+    }
+
+    #[test]
+    fn merge_loaded_config_starts_requested_panels() {
+        let mut runtime = runtime_with_screens(1);
+        let key = PanelKey {
+            screen_id: 0,
+            panel_id: 0,
+        };
+
+        runtime
+            .update_panel_config(
+                key,
+                PanelConfigPatch {
+                    host: Some("127.0.0.1".to_string()),
+                    path: Some("stream".to_string()),
+                    ..PanelConfigPatch::default()
+                },
+            )
+            .expect("patch should apply");
+
+        let mut loaded = runtime.to_app_config();
+        loaded.screens[0].panels[0].start_on_load = true;
+
+        let outcome = runtime
+            .merge_loaded_config(loaded, HashMap::new())
+            .expect("merge should work");
+
+        assert!(outcome.stop_keys.is_empty());
+        assert_eq!(outcome.restart_keys, vec![key]);
     }
 
     #[test]
