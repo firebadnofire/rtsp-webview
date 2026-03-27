@@ -21,7 +21,7 @@ git clone https://github.com/firebadnofire/rtsp-webview.git
 
 ### Build
 
-From the repository root, run:
+From the repository root, run from cmd.exe (or double click):
 
 ```bat
 build-helpers\windows\build-exe.bat
@@ -33,7 +33,7 @@ The script presents a numbered architecture menu before building:
 2. `x86`
 3. `AARCH64`
 
-To skip the prompt, pass the architecture directly:
+To skip the prompt, pass the architecture directly via cmd:
 
 ```bat
 build-helpers\windows\build-exe.bat aarch64

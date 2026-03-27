@@ -32,6 +32,11 @@ The current app supports:
 - config save/load
 - restoring active cameras when a saved config is loaded
 
+## Install
+
+See (build-helpers)[https://pubcode.archuser.org/firebadnofire/rtsp-webview/src/branch/main/build-helpers#windows-helpers] for more info on how to build this software yourself using the automated scripts.
+
+
 ## What The App Does
 
 On first launch, the app starts with no screens and no panels.
