@@ -34,7 +34,7 @@ The current app supports:
 
 ## Install
 
-See (build-helpers)[https://pubcode.archuser.org/firebadnofire/rtsp-webview/src/branch/main/build-helpers#windows-helpers] for more info on how to build this software yourself using the automated scripts.
+See [build-helpers](https://pubcode.archuser.org/firebadnofire/rtsp-webview/src/branch/main/build-helpers#windows-helpers) for more info on how to build this software yourself using the automated scripts.
 
 
 ## What The App Does
