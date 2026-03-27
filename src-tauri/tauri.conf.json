@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/1",
+  "build": {
+    "beforeBuildCommand": "cd ui && npm run build",
+    "beforeDevCommand": "cd ui && npm run build",
+    "devPath": "../ui/dist/index.html",
+    "distDir": "../ui/dist"
+  },
+  "package": {
+    "productName": "RTSP Viewer",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "dialog": {
+        "open": true,
+        "save": true
+      },
+      "fs": {
+        "all": true
+      },
+      "path": {
+        "all": true
+      },
+      "window": {
+        "setFullscreen": true
+      }
+    },
+    "windows": [
+      {
+        "title": "RTSP Viewer",
+        "width": 1400,
+        "height": 900,
+        "resizable": true
+      }
+    ],
+    "bundle": {
+      "active": false,
+      "identifier": "com.rtspviewer.app",
+      "icon": [
+        "icons/icon.png",
+        "icons/icon.ico"
+      ]
+    },
+    "security": {
+      "csp": null
+    }
+  }
+}

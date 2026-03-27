@@ -1,0 +1,16 @@
+RTSP Viewer Linux Tarball
+=========================
+
+Contents
+- rtsp_viewer_tauri
+- LICENSE
+
+Runtime requirements
+- A Linux desktop with GTK 3 and WebKitGTK 4.0 runtime libraries
+- ffmpeg available on PATH for RTSP playback, reconnects, and snapshots
+- A Secret Service compatible keyring daemon for credential storage
+
+Notes
+- This tarball only packages the compiled application binary and documentation.
+- It does not install system dependencies for you.
+- If ffmpeg is missing, stream startup will fail with an explicit runtime error.

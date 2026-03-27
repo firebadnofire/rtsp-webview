@@ -1,0 +1,9 @@
+[package]
+name = "rtsp_media"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rtsp_core = { path = "../core" }
+thiserror.workspace = true
