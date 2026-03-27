@@ -1,16 +1,36 @@
 # RTSP Viewer
 
-# Why?
+A cross-platform desktop viewer for RTSP camera streams.
 
-RTSP Viewer was born when I decided Lorex is bad at making software for desktops and browsers. 
+Replace your camera system’s terrible desktop app or browser UI with something that actually works.
 
-My [D841 series](https://www.lorex.com/blogs/products/d441-series) DVR exposes an RTSP stream on it's LAN IP, so realizing the Lorex desktop app is both terrible and Windows only, I looked for alternatives on RTSP. Unfortunately, I never found a good one for multiple cameras. So that's what I made.
+## Why?
 
-Originally, this was made as a [proof of concept in Python](https://codeberg.org/firebadnofire/rtsp-client.git). Eventually I grew tired with both python's limitations and the UI of the program itself. So I started over with this project in Rust with Webview.
+Most IP camera systems ship with software that’s, frankly, awful. Clunky desktop apps, browser interfaces stuck in Internet Explorer, and just enough friction to make you question why you bought the thing in the first place.
 
-# Features
+My Lorex DVR exposes RTSP streams on the LAN, which meant the video itself was fine. The problem was everything around it. So instead of fighting their software, I built my own viewer.
+
+If your cameras support RTSP, you can skip vendor software entirely and just use this.
+
+Originally this started as a quick proof of concept in Python, but it didn’t scale well and the UI wasn’t great. So I rebuilt it in Rust with a WebView-based UI and turned it into something I’d actually want to use every day.
+
+## Features
 
 `rtsp-webview` is a Rust desktop RTSP viewer with a WebView-based UI.
+
+- clean multi-camera desktop UI
+
+- bulk RTSP autoconfiguration from a template (spin up dozens of streams in seconds)
+
+- per-screen and global camera controls
+
+- stored credentials
+
+- snapshots and recording
+
+- config save/load with auto-reconnect
+
+- cross-platform: Windows, macOS, Linux
 
 <details>
 <summary>Program UI</summary>
@@ -21,16 +41,6 @@ Originally, this was made as a [proof of concept in Python](https://codeberg.org
 
 </details>
 
-The current app supports:
-
-- empty-first startup with no predefined screens
-- manual camera setup
-- bulk RTSP autoconfiguration from a template
-- per-screen and global camera controls
-- stored credentials
-- snapshots and recording
-- config save/load
-- restoring active cameras when a saved config is loaded
 
 ## Install
 
