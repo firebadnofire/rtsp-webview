@@ -32,7 +32,7 @@ The workflow is a three-entry matrix:
 | --- | --- | --- | --- |
 | Windows | `windows-latest` | `build-helpers\windows\build-exe.bat amd64` | `rtsp-viewer-windows-amd64.zip` |
 | macOS | `macos-latest` | `./build-helpers/mac/build-app.sh` | `rtsp-viewer-macos-app.zip` |
-| Linux | `ubuntu-22.04` | `BUILD_PLATFORM=linux/amd64 ./build-helpers/linux/build-tarball.sh` | `rtsp-viewer-linux-x86_64.tar.gz` |
+| Linux | `ubuntu-22.04` | Native Ubuntu build with `npm`, `cargo`, and WebKitGTK packages | `rtsp-viewer-linux-x86_64.tar.gz` |
 
 The runner labels are infrastructure configuration. They must exist on the
 Forgejo runner fleet and must map to machines with the native OS listed above.
@@ -76,9 +76,14 @@ macOS:
 
 Linux:
 
-1. Runs the Docker Buildx tarball helper for `linux/amd64`.
-2. Finds the generated `rtsp-viewer-*-linux-x86_64.tar.gz` tarball.
-3. Copies it to `dist/releases/rtsp-viewer-linux-x86_64.tar.gz`.
+1. Installs native Ubuntu packages needed to compile the Tauri WebKitGTK app.
+2. Installs Node 20 from NodeSource if the runner does not already have Node 20
+   or newer.
+3. Installs stable Rust through rustup if `cargo` or `rustup` is missing.
+4. Runs `npm --prefix ui ci`, `npm --prefix ui run build`, and
+   `cargo build --locked --release -p rtsp_viewer_tauri`.
+5. Packs the binary, license, and Linux runtime notes into
+   `dist/releases/rtsp-viewer-linux-x86_64.tar.gz`.
 
 Each job validates that its release artifact exists and is non-empty before
 publishing.
@@ -108,10 +113,8 @@ Validated from this workspace on April 28, 2026:
 | --- | --- | --- |
 | Forgejo/Gitea API | `https://pubcode.archuser.org/api/v1/version` | Returned `14.0.4+gitea-1.22.0`. |
 | Repository HTTPS remote | `https://pubcode.archuser.org/firebadnofire/rtsp-webview.git` | `git ls-remote` returned `HEAD` and tag refs. |
-| Dockerfile frontend | `docker.io/docker/dockerfile:1.7` | `docker buildx imagetools inspect` succeeded. |
-| Linux build image | `docker.io/library/node:20-bullseye` | `docker manifest inspect` succeeded. |
-| Linux package image | `docker.io/library/debian:bullseye-slim` | `docker manifest inspect` succeeded. |
-| APT cache probe image | `docker.io/library/busybox:1.36.1` | `docker manifest inspect` succeeded. |
+| NodeSource GPG key | `https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key` | HTTPS HEAD returned `200`. |
+| NodeSource Node 20 repository | `https://deb.nodesource.com/node_20.x/dists/nodistro/Release` | HTTPS HEAD returned `200`. |
 | Rust installer | `https://sh.rustup.rs` | HTTPS HEAD returned `200`. |
 | npm registry | `https://registry.npmjs.org/` | HTTPS HEAD returned `200`. |
 | crates.io API | `https://crates.io/api/v1/crates/serde` | HTTPS API request returned crate JSON. |

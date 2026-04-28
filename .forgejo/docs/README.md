@@ -55,8 +55,8 @@ macOS:
 Linux:
 
 - `bash`, `git`, `base64`, `curl`, `jq`
-- Docker with Buildx
-- permission to create/use the `build-system` Docker network
+- `apt-get` access to install native Tauri/WebKit build dependencies
+- outbound HTTPS access to NodeSource and rustup if Node 20 or Rust is missing
 
 ### Secrets
 
