@@ -1,7 +1,9 @@
 name: Release Packaging
 
 'on':
-  tag:
+  push:
+    tags:
+      - 'v*'
 
 env:
   NODE_VERSION: "20"
@@ -20,7 +22,7 @@ env:
 jobs:
   package:
     name: Package ${{ matrix.package.name }}
-    if: ${{ startsWith(forgejo.ref_name, 'v') || startsWith(github.ref_name, 'v') }}
+    if: ${{ startsWith(forgejo.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ${{ matrix.package.runs_on }}
     strategy:
       fail-fast: false
@@ -160,6 +162,10 @@ jobs:
           api_url="${FORGEJO_API_URL:-${GITHUB_API_URL:?Missing Forgejo API URL}}"
           repository="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:?Missing repository name}}"
           tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:-}}"
+          if [ -z "$tag" ]; then
+            tag="${FORGEJO_REF:-${GITHUB_REF:-}}"
+            tag="${tag#refs/tags/}"
+          fi
           token="${FORGEJO_TOKEN:-${GITHUB_TOKEN:?Missing Forgejo token}}"
           owner="${repository%%/*}"
           repo="${repository#*/}"
