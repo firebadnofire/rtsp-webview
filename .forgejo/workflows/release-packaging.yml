@@ -3,92 +3,280 @@ name: Release Packaging
 'on':
   tag:
 
+env:
+  NODE_VERSION: "20"
+  RELEASE_BODY: |
+    Automated cross-platform release assets for RTSP Viewer.
+
+    Assets:
+    - Windows: `rtsp-viewer-windows-amd64.zip`
+    - macOS: `rtsp-viewer-macos-app.zip`
+    - Linux: `rtsp-viewer-linux-x86_64.tar.gz`
+
+    macOS note:
+    After unzipping `RTSP Viewer.app`, remove the quarantine flag before first launch:
+    `xattr -dr com.apple.quarantine "/path/to/RTSP Viewer.app"`
+
 jobs:
-  package_windows:
-    name: Package Windows
-    uses: ./.forgejo/workflows/build.yml
-    with:
-      runs_on: windows-latest
-      build_shell: pwsh
-      rust_targets: x86_64-pc-windows-msvc
-      setup_command: |
-        if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
-          choco install jq -y --no-progress
-        }
-      build_command: |
-        build-helpers\windows\build-exe.bat amd64
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        New-Item -ItemType Directory -Force -Path dist\releases | Out-Null
-        if (Test-Path dist\releases\rtsp-viewer-windows-amd64.zip) {
-          Remove-Item dist\releases\rtsp-viewer-windows-amd64.zip -Force
-        }
-        Compress-Archive -Path dist\windows\amd64\rtsp-viewer.exe -DestinationPath dist\releases\rtsp-viewer-windows-amd64.zip
-      artifact_path: dist/releases/rtsp-viewer-windows-amd64.zip
-      release_body: |
-        Automated cross-platform release assets for RTSP Viewer.
+  package:
+    name: Package ${{ matrix.package.name }}
+    if: ${{ startsWith(forgejo.ref_name, 'v') || startsWith(github.ref_name, 'v') }}
+    runs-on: ${{ matrix.package.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - name: Windows
+            runs_on: windows-latest
+            build_shell: pwsh
+            setup_command: |
+              if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
+                choco install jq -y --no-progress
+              }
+            rust_toolchain: stable
+            rust_targets: x86_64-pc-windows-msvc
+            build_command: |
+              build-helpers\windows\build-exe.bat amd64
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              New-Item -ItemType Directory -Force -Path dist\releases | Out-Null
+              if (Test-Path dist\releases\rtsp-viewer-windows-amd64.zip) {
+                Remove-Item dist\releases\rtsp-viewer-windows-amd64.zip -Force
+              }
+              Compress-Archive -Path dist\windows\amd64\rtsp-viewer.exe -DestinationPath dist\releases\rtsp-viewer-windows-amd64.zip
+            artifact_path: dist/releases/rtsp-viewer-windows-amd64.zip
+          - name: macOS
+            runs_on: macos-latest
+            build_shell: bash
+            setup_command: ""
+            rust_toolchain: stable
+            rust_targets: ""
+            build_command: |
+              set -euo pipefail
+              ./build-helpers/mac/build-app.sh
+              mkdir -p dist/releases
+              rm -f dist/releases/rtsp-viewer-macos-app.zip
+              ditto -c -k --sequesterRsrc --keepParent "dist/macos/RTSP Viewer.app" "dist/releases/rtsp-viewer-macos-app.zip"
+            artifact_path: dist/releases/rtsp-viewer-macos-app.zip
+          - name: Linux
+            runs_on: ubuntu-22.04
+            build_shell: bash
+            setup_command: |
+              set -euo pipefail
+              docker version >/dev/null
+            rust_toolchain: ""
+            rust_targets: ""
+            build_command: |
+              set -euo pipefail
+              BUILD_PLATFORM=linux/amd64 ./build-helpers/linux/build-tarball.sh
+              mkdir -p dist/releases
+              linux_tarball="$(ls -t dist/linux/rtsp-viewer-*-linux-x86_64.tar.gz | head -n 1)"
+              if [ -z "${linux_tarball}" ]; then
+                echo "Linux tarball build did not produce an x86_64 archive." >&2
+                exit 1
+              fi
+              cp "${linux_tarball}" dist/releases/rtsp-viewer-linux-x86_64.tar.gz
+            artifact_path: dist/releases/rtsp-viewer-linux-x86_64.tar.gz
 
-        Assets:
-        - Windows: `rtsp-viewer-windows-amd64.zip`
-        - macOS: `rtsp-viewer-macos-app.zip`
-        - Linux: `rtsp-viewer-linux-x86_64.tar.gz`
+    steps:
+      - name: Check out repository
+        uses: https://pubcode.archuser.org/actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
 
-        macOS note:
-        After unzipping `RTSP Viewer.app`, remove the quarantine flag before first launch:
-        `xattr -dr com.apple.quarantine "/path/to/RTSP Viewer.app"`
+      - name: Set up Node.js
+        uses: https://pubcode.archuser.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
-  package_macos:
-    name: Package macOS
-    uses: ./.forgejo/workflows/build.yml
-    with:
-      runs_on: macos-latest
-      build_shell: bash
-      build_command: |
-        set -euo pipefail
-        ./build-helpers/mac/build-app.sh
-        mkdir -p dist/releases
-        rm -f dist/releases/rtsp-viewer-macos-app.zip
-        ditto -c -k --sequesterRsrc --keepParent "dist/macos/RTSP Viewer.app" "dist/releases/rtsp-viewer-macos-app.zip"
-      artifact_path: dist/releases/rtsp-viewer-macos-app.zip
-      release_body: |
-        Automated cross-platform release assets for RTSP Viewer.
+      - name: Set up Rust
+        if: ${{ matrix.package.rust_toolchain != '' }}
+        uses: https://github.com/dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: ${{ matrix.package.rust_toolchain }}
+          targets: ${{ matrix.package.rust_targets }}
 
-        Assets:
-        - Windows: `rtsp-viewer-windows-amd64.zip`
-        - macOS: `rtsp-viewer-macos-app.zip`
-        - Linux: `rtsp-viewer-linux-x86_64.tar.gz`
+      - name: Run environment setup
+        if: ${{ matrix.package.setup_command != '' }}
+        shell: ${{ matrix.package.build_shell }}
+        run: ${{ matrix.package.setup_command }}
 
-        macOS note:
-        After unzipping `RTSP Viewer.app`, remove the quarantine flag before first launch:
-        `xattr -dr com.apple.quarantine "/path/to/RTSP Viewer.app"`
+      - name: Validate packaging inputs
+        shell: bash
+        env:
+          ARTIFACT_PATH: ${{ matrix.package.artifact_path }}
+          BUILD_COMMAND: ${{ matrix.package.build_command }}
+        run: |
+          set -euo pipefail
 
-  package_linux:
-    name: Package Linux
-    uses: ./.forgejo/workflows/build.yml
-    with:
-      runs_on: ubuntu-22.04
-      build_shell: bash
-      setup_command: |
-        set -euo pipefail
-        docker version >/dev/null
-      build_command: |
-        set -euo pipefail
-        BUILD_PLATFORM=linux/amd64 ./build-helpers/linux/build-tarball.sh
-        mkdir -p dist/releases
-        linux_tarball="$(ls -t dist/linux/rtsp-viewer-*-linux-x86_64.tar.gz | head -n 1)"
-        if [ -z "${linux_tarball}" ]; then
-          echo "Linux tarball build did not produce an x86_64 archive." >&2
-          exit 1
-        fi
-        cp "${linux_tarball}" dist/releases/rtsp-viewer-linux-x86_64.tar.gz
-      artifact_path: dist/releases/rtsp-viewer-linux-x86_64.tar.gz
-      release_body: |
-        Automated cross-platform release assets for RTSP Viewer.
+          if [ -z "${BUILD_COMMAND:-}" ]; then
+            echo "Missing matrix build_command for ${RUNNER_OS:-unknown runner OS}." >&2
+            exit 1
+          fi
 
-        Assets:
-        - Windows: `rtsp-viewer-windows-amd64.zip`
-        - macOS: `rtsp-viewer-macos-app.zip`
-        - Linux: `rtsp-viewer-linux-x86_64.tar.gz`
+          if [ -z "${ARTIFACT_PATH:-}" ]; then
+            echo "Missing matrix artifact_path for ${RUNNER_OS:-unknown runner OS}." >&2
+            exit 1
+          fi
 
-        macOS note:
-        After unzipping `RTSP Viewer.app`, remove the quarantine flag before first launch:
-        `xattr -dr com.apple.quarantine "/path/to/RTSP Viewer.app"`
+          for tool in curl jq; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "Missing required tool: ${tool}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Run build
+        shell: ${{ matrix.package.build_shell }}
+        run: ${{ matrix.package.build_command }}
+
+      - name: Validate release artifact
+        shell: bash
+        env:
+          ARTIFACT_PATH: ${{ matrix.package.artifact_path }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "$ARTIFACT_PATH" ]; then
+            echo "Release artifact does not exist or is not a file: ${ARTIFACT_PATH}" >&2
+            exit 1
+          fi
+
+          if [ ! -s "$ARTIFACT_PATH" ]; then
+            echo "Release artifact is empty: ${ARTIFACT_PATH}" >&2
+            exit 1
+          fi
+
+      - name: Publish Forgejo release
+        shell: bash
+        env:
+          ARTIFACT_PATH: ${{ matrix.package.artifact_path }}
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+          INPUT_RELEASE_BODY: ${{ env.RELEASE_BODY }}
+        run: |
+          set -euo pipefail
+
+          api_url="${FORGEJO_API_URL:-${GITHUB_API_URL:?Missing Forgejo API URL}}"
+          repository="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:?Missing repository name}}"
+          tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:-}}"
+          token="${FORGEJO_TOKEN:-${GITHUB_TOKEN:?Missing Forgejo token}}"
+          owner="${repository%%/*}"
+          repo="${repository#*/}"
+          asset_path="${ARTIFACT_PATH:?Missing artifact path}"
+          release_name="Release ${tag}"
+          release_body="${INPUT_RELEASE_BODY:-Automated release for ${tag}.}"
+
+          case "$api_url" in
+            https://*) ;;
+            *)
+              echo "Forgejo API URL must use https: ${api_url}" >&2
+              exit 1
+              ;;
+          esac
+
+          if [ -z "$tag" ]; then
+            echo "Missing release tag. Run this workflow on a tag ref." >&2
+            exit 1
+          fi
+
+          release_payload="$(jq -n \
+            --arg tag "$tag" \
+            --arg name "$release_name" \
+            --arg body "$release_body" \
+            '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false, hide_archive_links: false}')"
+
+          api_request() {
+            local method="$1"
+            local url="$2"
+            shift 2
+            curl --proto '=https' --tlsv1.2 --fail-with-body --silent --show-error \
+              --request "$method" \
+              --header "Authorization: token ${token}" \
+              "$@" \
+              "$url"
+          }
+
+          fetch_release_by_tag() {
+            local response_file
+            local status
+
+            response_file="$(mktemp)"
+            status="$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --header "Authorization: token ${token}" \
+              "${api_url}/repos/${owner}/${repo}/releases/tags/${tag}")"
+
+            if [ "$status" = "200" ]; then
+              cat "$response_file"
+              return 0
+            fi
+
+            if [ "$status" = "404" ]; then
+              return 1
+            fi
+
+            cat "$response_file" >&2
+            echo "Failed to look up release for ${tag}: HTTP ${status}" >&2
+            exit 1
+          }
+
+          create_release() {
+            local response_file
+            local status
+
+            response_file="$(mktemp)"
+            status="$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "Authorization: token ${token}" \
+              --header "Content-Type: application/json" \
+              --data "$release_payload" \
+              "${api_url}/repos/${owner}/${repo}/releases")"
+
+            if [ "$status" = "200" ] || [ "$status" = "201" ]; then
+              cat "$response_file"
+              return 0
+            fi
+
+            if [ "$status" = "409" ] || [ "$status" = "422" ]; then
+              if release_json="$(fetch_release_by_tag)"; then
+                printf '%s' "$release_json"
+                return 0
+              fi
+            fi
+
+            cat "$response_file" >&2
+            echo "Failed to create release for ${tag}: HTTP ${status}" >&2
+            exit 1
+          }
+
+          if release_json="$(fetch_release_by_tag)"; then
+            release_id="$(printf '%s' "$release_json" | jq -r '.id')"
+            release_json="$(api_request PATCH "${api_url}/repos/${owner}/${repo}/releases/${release_id}" \
+              --header "Content-Type: application/json" \
+              --data "$release_payload")"
+          else
+            release_json="$(create_release)"
+          fi
+
+          release_id="$(printf '%s' "$release_json" | jq -r '.id')"
+          if [ -z "$release_id" ] || [ "$release_id" = "null" ]; then
+            echo "Release response did not include an id." >&2
+            exit 1
+          fi
+
+          asset_name="$(basename "$asset_path")"
+          asset_name_encoded="$(jq -nr --arg value "$asset_name" '$value|@uri')"
+          existing_asset_id="$(api_request GET "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets" \
+            | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' \
+            | head -n 1)"
+
+          if [ -n "$existing_asset_id" ]; then
+            api_request DELETE "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets/${existing_asset_id}" >/dev/null
+          fi
+
+          api_request POST "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
+            --form "attachment=@${asset_path}" >/dev/null
