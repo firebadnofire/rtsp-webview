@@ -6,7 +6,6 @@ name: Release Packaging
       - 'v*'
 
 env:
-  NODE_VERSION: "20"
   RELEASE_BODY: |
     Automated cross-platform release assets for RTSP Viewer.
 
@@ -31,12 +30,11 @@ jobs:
           - name: Windows
             runs_on: windows-latest
             build_shell: pwsh
+            required_tools: curl jq node npm cargo rustup
             setup_command: |
               if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
                 choco install jq -y --no-progress
               }
-            rust_toolchain: stable
-            rust_targets: x86_64-pc-windows-msvc
             build_command: |
               build-helpers\windows\build-exe.bat amd64
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -49,9 +47,8 @@ jobs:
           - name: macOS
             runs_on: macos-latest
             build_shell: bash
+            required_tools: curl jq node npm cargo rustup codesign
             setup_command: ""
-            rust_toolchain: stable
-            rust_targets: ""
             build_command: |
               set -euo pipefail
               ./build-helpers/mac/build-app.sh
@@ -62,11 +59,10 @@ jobs:
           - name: Linux
             runs_on: ubuntu-22.04
             build_shell: bash
+            required_tools: curl docker jq
             setup_command: |
               set -euo pipefail
               docker version >/dev/null
-            rust_toolchain: ""
-            rust_targets: ""
             build_command: |
               set -euo pipefail
               BUILD_PLATFORM=linux/amd64 ./build-helpers/linux/build-tarball.sh
@@ -81,23 +77,70 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: https://pubcode.archuser.org/actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          submodules: recursive
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+        run: |
+          set -euo pipefail
 
-      - name: Set up Node.js
-        uses: https://pubcode.archuser.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: ${{ env.NODE_VERSION }}
+          for tool in base64 git; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "Missing required checkout tool: ${tool}" >&2
+              exit 1
+            fi
+          done
 
-      - name: Set up Rust
-        if: ${{ matrix.package.rust_toolchain != '' }}
-        uses: https://github.com/dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-        with:
-          toolchain: ${{ matrix.package.rust_toolchain }}
-          targets: ${{ matrix.package.rust_targets }}
+          server_url="${FORGEJO_SERVER_URL:-${GITHUB_SERVER_URL:-}}"
+          repository="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
+          ref="${FORGEJO_REF:-${GITHUB_REF:-}}"
+          sha="${FORGEJO_SHA:-${GITHUB_SHA:-}}"
+          token="${FORGEJO_TOKEN:-${GITHUB_TOKEN:-}}"
+
+          if [ -z "$server_url" ]; then
+            echo "Missing Forgejo server URL." >&2
+            exit 1
+          fi
+
+          if [ -z "$repository" ]; then
+            echo "Missing repository name." >&2
+            exit 1
+          fi
+
+          case "$server_url" in
+            https://*) ;;
+            *)
+              echo "Repository server URL must use https: ${server_url}" >&2
+              exit 1
+              ;;
+          esac
+
+          remote_url="${server_url%/}/${repository}.git"
+          git init .
+          git remote remove origin >/dev/null 2>&1 || true
+          git remote add origin "$remote_url"
+
+          git_fetch() {
+            if [ -n "$token" ]; then
+              auth_header="$(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')"
+              git -c "http.${remote_url}.extraheader=AUTHORIZATION: basic ${auth_header}" "$@"
+            else
+              git "$@"
+            fi
+          }
+
+          if [ -n "$ref" ]; then
+            git_fetch fetch --force --tags --prune --depth=1 origin "+${ref}:${ref}"
+            git checkout --force --detach "$ref"
+          elif [ -n "$sha" ]; then
+            git_fetch fetch --force --tags --prune --depth=1 origin "$sha"
+            git checkout --force --detach "$sha"
+          else
+            echo "Missing both ref and sha for checkout." >&2
+            exit 1
+          fi
+
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth=1
 
       - name: Run environment setup
         if: ${{ matrix.package.setup_command != '' }}
@@ -109,6 +152,7 @@ jobs:
         env:
           ARTIFACT_PATH: ${{ matrix.package.artifact_path }}
           BUILD_COMMAND: ${{ matrix.package.build_command }}
+          REQUIRED_TOOLS: ${{ matrix.package.required_tools }}
         run: |
           set -euo pipefail
 
@@ -122,7 +166,7 @@ jobs:
             exit 1
           fi
 
-          for tool in curl jq; do
+          for tool in $REQUIRED_TOOLS; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "Missing required tool: ${tool}" >&2
               exit 1
