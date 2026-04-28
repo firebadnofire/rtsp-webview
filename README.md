@@ -46,6 +46,20 @@ Originally this started as a quick proof of concept in Python, but it didn’t s
 
 See [build-helpers](https://pubcode.archuser.org/firebadnofire/rtsp-webview/src/branch/main/build-helpers#windows-helpers) for more info on how to build this software yourself using the automated scripts.
 
+## Release Artifacts
+
+Tagged CI builds publish these packaged release artifacts:
+
+- `rtsp-viewer-windows-amd64.zip`
+- `rtsp-viewer-macos-app.zip`
+- `rtsp-viewer-linux-x86_64.tar.gz`
+
+The macOS release contains `RTSP Viewer.app` inside a zip archive. After unzipping, if macOS blocks the app because it was downloaded from the internet, remove the quarantine flag before first launch:
+
+```bash
+xattr -dr com.apple.quarantine "/path/to/RTSP Viewer.app"
+```
+
 
 ## What The App Does
 
@@ -321,6 +335,12 @@ From the repository root:
 ```
 
 This builds the Docker-based Linux tarball and writes it under `dist/linux/`.
+
+The CI packaging workflow uses the same helper and republishes the resulting `x86_64` tarball as:
+
+```text
+dist/releases/rtsp-viewer-linux-x86_64.tar.gz
+```
 
 When run interactively, it shows a numbered architecture menu before the Docker build starts:
 

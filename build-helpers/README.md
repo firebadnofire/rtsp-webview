@@ -58,6 +58,12 @@ It also keeps an architecture-specific copy under:
 dist\windows\<architecture>\rtsp-viewer.exe
 ```
 
+The CI packaging workflow wraps the `amd64` build into this release archive:
+
+```text
+dist/releases/rtsp-viewer-windows-amd64.zip
+```
+
 Required Windows programs can be installed with:
 
 ```powershell
@@ -168,6 +174,12 @@ rtsp-viewer-0.1.0-linux-x86_64.tar.gz
 
 The tarball includes the compiled binary, the project license, and Linux runtime notes.
 
+The CI packaging workflow copies the generated `x86_64` tarball to this stable release path:
+
+```text
+dist/releases/rtsp-viewer-linux-x86_64.tar.gz
+```
+
 ## macOS App Helper
 
 On macOS, from the repository root, run:
@@ -193,6 +205,18 @@ Output:
 
 ```text
 dist/macos/RTSP Viewer.app
+```
+
+The CI packaging workflow zips that app bundle into:
+
+```text
+dist/releases/rtsp-viewer-macos-app.zip
+```
+
+If macOS quarantines the downloaded app after extraction, clear it before first launch:
+
+```bash
+xattr -dr com.apple.quarantine "/path/to/RTSP Viewer.app"
 ```
 
 Runtime note:
