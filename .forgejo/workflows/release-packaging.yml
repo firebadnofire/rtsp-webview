@@ -32,12 +32,17 @@ jobs:
             runs_on: windows-latest
             build_shell: pwsh
             required_tools: bash curl git jq node npm cargo rustup
-            checkout_runtime_command: |
-              foreach ($tool in @("git", "bash")) {
-                if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-                  Write-Error "$tool is required before repository checkout."
+            prepare_checkout_command: |
+              if ((-not (Get-Command git -ErrorAction SilentlyContinue)) -or (-not (Get-Command bash -ErrorAction SilentlyContinue))) {
+                if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+                  Write-Error "git and bash are required before repository checkout, and Chocolatey is not available to install Git for Windows."
                   exit 1
                 }
+                choco install git -y --no-progress
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+                $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+                $env:Path = "$machinePath;$userPath"
               }
               bash -lc 'command -v base64 >/dev/null' 2>$null
               if ($LASTEXITCODE -ne 0) {
@@ -66,11 +71,11 @@ jobs:
             runs_on: macos-latest
             build_shell: bash
             required_tools: base64 curl git jq node npm cargo rustup codesign
-            checkout_runtime_command: |
+            prepare_checkout_command: |
               set -euo pipefail
               for tool in base64 git; do
                 if ! command -v "$tool" >/dev/null 2>&1; then
-                  echo "Missing required checkout tool: ${tool}" >&2
+                  echo "Missing required checkout tool: ${tool}. Install Xcode Command Line Tools or provide ${tool} on the macOS runner PATH." >&2
                   exit 1
                 fi
               done
@@ -86,11 +91,25 @@ jobs:
             runs_on: ubuntu-22.04
             build_shell: bash
             required_tools: base64 curl docker git jq
-            checkout_runtime_command: |
+            prepare_checkout_command: |
               set -euo pipefail
-              for tool in base64 git; do
+              missing_tools=""
+              for tool in base64 curl git jq; do
                 if ! command -v "$tool" >/dev/null 2>&1; then
-                  echo "Missing required checkout tool: ${tool}" >&2
+                  missing_tools="${missing_tools} ${tool}"
+                fi
+              done
+              if [ -n "$missing_tools" ]; then
+                apt_get="apt-get"
+                if command -v sudo >/dev/null 2>&1; then
+                  apt_get="sudo apt-get"
+                fi
+                $apt_get update
+                $apt_get install -y --no-install-recommends ca-certificates coreutils curl git jq
+              fi
+              for tool in base64 curl git jq; do
+                if ! command -v "$tool" >/dev/null 2>&1; then
+                  echo "Missing required checkout tool after bootstrap: ${tool}" >&2
                   exit 1
                 fi
               done
@@ -110,10 +129,10 @@ jobs:
             artifact_path: dist/releases/rtsp-viewer-linux-x86_64.tar.gz
 
     steps:
-      - name: Validate checkout runtime
+      - name: Prepare checkout runtime
         shell: ${{ matrix.package.build_shell }}
         run: |
-          ${{ matrix.package.checkout_runtime_command }}
+          ${{ matrix.package.prepare_checkout_command }}
       - name: Check out repository
         shell: bash
         env:

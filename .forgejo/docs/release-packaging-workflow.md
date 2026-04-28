@@ -40,15 +40,21 @@ This repository cannot verify runner labels locally.
 
 ## Checkout
 
-The workflow does not use `actions/checkout`. It performs checkout with shell
-commands against:
+The workflow does not use `actions/checkout`. It first prepares the minimal
+checkout runtime, then performs checkout with shell commands against:
 
 ```text
 ${FORGEJO_SERVER_URL}/${FORGEJO_REPOSITORY}.git
 ```
 
-The checkout step requires HTTPS and fails for non-HTTPS server URLs. It uses the
-Forgejo workflow token as an HTTP extra header when a token is present. This
+The Linux matrix entry installs `ca-certificates`, `coreutils`, `curl`, `git`,
+and `jq` with `apt-get` when any of those tools are missing. The Windows matrix
+entry installs Git for Windows through Chocolatey when `git` or `bash` is
+missing. The macOS matrix entry expects Xcode Command Line Tools or equivalent
+runner provisioning to provide `git`.
+
+The checkout step requires HTTPS and fails for non-HTTPS server URLs. It uses
+the Forgejo workflow token as an HTTP extra header when a token is present. This
 avoids relying on `actions/*` mirrors or automatic action rewrites in a
 self-hosted Forgejo environment.
 
