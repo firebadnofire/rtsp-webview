@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "dev": "vite --port 1420 --strictPort",
     "build": "tsc --noEmit && vite build",
@@ -15,7 +18,7 @@
     "@tauri-apps/api": "^1.6.0"
   },
   "devDependencies": {
-    "@types/node": "^22.13.8",
+    "@types/node": "^24.12.2",
     "jsdom": "^25.0.1",
     "typescript": "^5.9.3",
     "vite": "^6.2.0",

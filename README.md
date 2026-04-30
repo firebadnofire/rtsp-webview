@@ -54,7 +54,9 @@ Tagged CI builds publish these packaged release artifacts:
 - `rtsp-viewer-macos-app.zip`
 - `rtsp-viewer-linux-x86_64.tar.gz`
 
-The macOS release contains `RTSP Viewer.app` inside a zip archive. After unzipping, if macOS blocks the app because it was downloaded from the internet, remove the quarantine flag before first launch:
+The macOS release contains a universal Intel and Apple Silicon `RTSP Viewer.app`
+inside a zip archive. After unzipping, if macOS blocks the app because it was
+downloaded from the internet, remove the quarantine flag before first launch:
 
 ```bash
 xattr -dr com.apple.quarantine "/path/to/RTSP Viewer.app"
@@ -172,11 +174,11 @@ rustup target add x86_64-pc-windows-msvc
 rustup target add i686-pc-windows-msvc
 rustup target add aarch64-pc-windows-msvc
 
-# NodeJS
+# Node.js 24 LTS
 winget install OpenJS.NodeJS.LTS
 ```
 
-After installation, close your terminal and open a new one so `node`, `npm`, `cargo`, and `rustup` are available on `PATH`.
+After installation, close your terminal and open a new one so `node`, `npm`, `cargo`, and `rustup` are available on `PATH`. Confirm `node --version` reports `v24.x`.
 
 ### 3. Build the Windows executable
 
@@ -200,7 +202,7 @@ build-helpers\windows\build-exe.bat aarch64
 
 What this script does:
 
-1. checks that `node`, `npm`, `cargo`, and `rustup` are installed
+1. checks that Node.js 24 LTS, `npm`, `cargo`, and `rustup` are installed
 2. verifies the selected Rust target is installed
 3. runs `npm ci` in `ui`
 4. builds the frontend bundle
@@ -273,6 +275,7 @@ If you want to run the app directly from source instead of building the packaged
 From the repository root:
 
 ```bash
+node --version # must report v24.x
 cd ui
 npm ci
 npm run build
@@ -285,6 +288,8 @@ What this does:
 1. installs frontend dependencies
 2. builds the frontend bundle into `ui/dist`
 3. starts the Tauri desktop app with `cargo run`
+
+The UI package enforces Node.js 24 during dependency installation.
 
 The app includes frontend preflight checks so development builds fail clearly if the frontend bundle is missing, empty, or unreachable instead of opening a blank white window.
 

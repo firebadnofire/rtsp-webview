@@ -12,7 +12,9 @@ UI_DIR="${ROOT_DIR}/ui"
 TAURI_CONFIG="${ROOT_DIR}/src-tauri/tauri.conf.json"
 ICON_SOURCE="${ROOT_DIR}/src-tauri/icons/icon.png"
 OUTPUT_DIR="${ROOT_DIR}/dist/macos"
-RELEASE_BIN="${ROOT_DIR}/target/release/rtsp_viewer_tauri"
+UNIVERSAL_BIN="${OUTPUT_DIR}/rtsp_viewer_tauri-universal"
+MACOS_TARGETS=("x86_64-apple-darwin" "aarch64-apple-darwin")
+MACOS_ARCHES=("x86_64" "arm64")
 
 fail() {
     printf 'ERROR: %s\n' "$*" >&2
@@ -24,6 +26,13 @@ require_command() {
     local label="$2"
 
     command -v "${command_name}" >/dev/null 2>&1 || fail "${label} was not found in PATH."
+}
+
+require_node_24() {
+    local node_major
+
+    node_major="$(node -p 'process.versions.node.split(".")[0]')" || fail "failed to inspect Node.js version."
+    [[ "${node_major}" == "24" ]] || fail "Node.js 24 LTS is required; found Node.js $(node --version)."
 }
 
 read_tauri_field() {
@@ -68,7 +77,9 @@ require_command node "Node.js"
 require_command npm "npm"
 require_command cargo "Rust"
 require_command rustup "rustup"
+require_command lipo "lipo"
 require_command codesign "codesign"
+require_node_24
 
 [[ -f "${TAURI_CONFIG}" ]] || fail "missing Tauri config at ${TAURI_CONFIG}"
 [[ -f "${ICON_SOURCE}" ]] || fail "missing icon source at ${ICON_SOURCE}"
@@ -87,6 +98,9 @@ icon_destination="${resources_dir}/${bundle_icon_name}.icns"
 
 echo "[1/5] Checking Rust toolchain..."
 rustup default >/dev/null 2>&1 || fail "No default Rust toolchain is configured."
+for target in "${MACOS_TARGETS[@]}"; do
+    rustup target add "${target}" >/dev/null 2>&1 || fail "failed to install Rust target ${target}"
+done
 
 echo "[2/5] Installing frontend dependencies..."
 (
@@ -100,20 +114,37 @@ echo "[3/5] Building frontend bundle..."
     npm run build
 ) || fail "frontend build failed."
 
-echo "[4/5] Building macOS release binary..."
-(
-    cd "${ROOT_DIR}"
-    cargo build --locked --release -p rtsp_viewer_tauri
-) || fail "Rust release build failed. Install Xcode Command Line Tools if the linker is missing."
+echo "[4/5] Building universal macOS release binary..."
+mkdir -p "${OUTPUT_DIR}"
+release_bins=()
+for target in "${MACOS_TARGETS[@]}"; do
+    (
+        cd "${ROOT_DIR}"
+        cargo build --locked --release --target "${target}" -p rtsp_viewer_tauri
+    ) || fail "Rust release build failed for ${target}. Install Xcode Command Line Tools if the linker is missing."
 
-[[ -f "${RELEASE_BIN}" ]] || fail "build finished but ${RELEASE_BIN} was not found"
+    target_bin="${ROOT_DIR}/target/${target}/release/rtsp_viewer_tauri"
+    [[ -f "${target_bin}" ]] || fail "build finished for ${target} but ${target_bin} was not found"
+    release_bins+=("${target_bin}")
+done
+
+rm -f "${UNIVERSAL_BIN}"
+lipo -create "${release_bins[@]}" -output "${UNIVERSAL_BIN}" || fail "failed to create universal macOS binary"
+[[ -f "${UNIVERSAL_BIN}" ]] || fail "universal binary was not created at ${UNIVERSAL_BIN}"
+
+universal_arches=" $(lipo -archs "${UNIVERSAL_BIN}") "
+for arch in "${MACOS_ARCHES[@]}"; do
+    case "${universal_arches}" in
+        *" ${arch} "*) ;;
+        *) fail "universal binary is missing required architecture ${arch}; lipo reports:${universal_arches}" ;;
+    esac
+done
 
 echo "[5/5] Assembling macOS app bundle..."
-mkdir -p "${OUTPUT_DIR}"
 rm -rf "${app_dir}"
 mkdir -p "${macos_dir}" "${resources_dir}"
 
-cp "${RELEASE_BIN}" "${macos_dir}/rtsp_viewer_tauri"
+cp "${UNIVERSAL_BIN}" "${macos_dir}/rtsp_viewer_tauri"
 chmod 0755 "${macos_dir}/rtsp_viewer_tauri"
 
 if command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
@@ -163,6 +194,14 @@ printf 'APPL????' > "${contents_dir}/PkgInfo"
 
 codesign --force --deep --sign - "${app_dir}" >/dev/null
 codesign --verify --deep --strict "${app_dir}" >/dev/null
+
+app_arches=" $(lipo -archs "${macos_dir}/rtsp_viewer_tauri") "
+for arch in "${MACOS_ARCHES[@]}"; do
+    case "${app_arches}" in
+        *" ${arch} "*) ;;
+        *) fail "signed app executable is missing required architecture ${arch}; lipo reports:${app_arches}" ;;
+    esac
+done
 
 echo "Build complete."
 echo "Output app bundle:"

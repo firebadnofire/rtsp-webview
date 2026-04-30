@@ -9,9 +9,12 @@ workflow. The detailed workflow behavior is documented in
 1. Keep `.forgejo/workflows/release-packaging.yml` aligned with RTSP Viewer build
    helper outputs and artifact names.
 2. Confirm the Forgejo runner fleet has the labels used by the matrix:
-   `windows-latest`, `macos-latest`, and `ubuntu-22.04`.
-3. Confirm each runner has the required native toolchain before pushing a tag.
-4. Validate the workflow syntax and at least one local build path before pushing
+   `macos-latest` and `ubuntu-22.04`.
+3. Confirm each runner has the required native or cross toolchain before pushing
+   a tag.
+4. Confirm the `GH_KEY` secret can push to and create releases in
+   `github.com/firebadnofire/rtsp-webview`.
+5. Validate the workflow syntax and at least one local build path before pushing
    a release tag.
 
 ## Implementation
@@ -22,7 +25,7 @@ The workflow publishes these deterministic asset names:
 
 ```text
 rtsp-viewer-windows-amd64.zip
-rtsp-viewer-macos-app.zip
+rtsp-viewer-macos-app.zip (universal Intel/Apple Silicon app)
 rtsp-viewer-linux-x86_64.tar.gz
 ```
 
@@ -35,39 +38,46 @@ rg -n 'APK|apk|Android|android|Launch Pad|launchpad|Gradle|gradlew|KEYSTORE|setu
 
 ### Runner Requirements
 
-Windows:
-
-- `bash`, `git`, `base64`, `curl`, `jq`
-- `node`, `npm`, `cargo`, `rustup`
-- MSVC Rust target `x86_64-pc-windows-msvc`
-- Visual Studio Build Tools with Desktop development with C++
-- Windows SDK
-- PowerShell `Compress-Archive`
-
 macOS:
 
 - `bash`, `git`, `base64`, `curl`, `jq`
-- `node`, `npm`, `cargo`, `rustup`
+- Node.js 24 LTS as `node`, plus `npm`, `cargo`, `rustup`
 - Xcode Command Line Tools
+- `lipo`
 - `codesign`
 - `ditto`
+- host-mode runner service PATH must expose Rust and Homebrew tools, or the
+  workflow must be able to find them in `~/.cargo/bin`, `/opt/homebrew/bin`, or
+  `/usr/local/bin`
 
 Linux:
 
 - `bash`, `git`, `base64`, `curl`, `jq`
 - `apt-get` access to install native Tauri/WebKit build dependencies
-- outbound HTTPS access to NodeSource and rustup if Node 20 or Rust is missing
+- `mingw-w64` and `zip` from Ubuntu packages for the Windows cross-build
+- `x86_64-w64-mingw32-gcc` from `mingw-w64`
+- Rust target `x86_64-pc-windows-gnu`
+- outbound HTTPS access to NodeSource and rustup if Node 24 or Rust is missing
 
 ### Secrets
 
-The workflow uses the Forgejo-provided workflow token:
+The workflow uses the Forgejo-provided workflow token for checkout and Forgejo
+release publishing:
 
 ```text
 ${{ forgejo.token }}
 ```
 
-No Android signing secrets, GitHub migration token, keystore, or APK-specific
-secret is required.
+It also requires this repository or organization secret:
+
+```text
+GH_KEY
+```
+
+`GH_KEY` must be able to push refs to `github.com/firebadnofire/rtsp-webview`,
+create the repository if it is missing, and create/update GitHub releases and
+release assets. No Android signing secrets, keystore, or APK-specific secret is
+required.
 
 ## Validation
 
@@ -79,6 +89,8 @@ rg -n 'APK|apk|Android|android|Launch Pad|launchpad|Gradle|gradlew|KEYSTORE|setu
 npm --prefix ui ci
 npm --prefix ui run build
 cargo test --locked --workspace
+rustup target add x86_64-pc-windows-gnu
+cargo check --locked --release --target x86_64-pc-windows-gnu -p rtsp_viewer_tauri
 ```
 
 The grep command should return no matches.
@@ -90,6 +102,7 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-If release publishing fails with a 404, check `FORGEJO_API_URL`,
+If Forgejo release publishing fails with a 404, check `FORGEJO_API_URL`,
 `FORGEJO_REPOSITORY`, and whether the workflow token can create or update
-releases for the repository.
+releases for the repository. If GitHub mirroring fails with a 404 or 403, check
+`GH_KEY` permissions and the `GITHUB_MIRROR_REPOSITORY` value in the workflow.

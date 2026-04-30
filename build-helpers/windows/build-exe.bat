@@ -23,6 +23,9 @@ if errorlevel 1 exit /b 1
 call :require_command npm "npm"
 if errorlevel 1 exit /b 1
 
+call :require_node_24
+if errorlevel 1 exit /b 1
+
 call :require_command cargo "Rust"
 if errorlevel 1 exit /b 1
 
@@ -165,6 +168,15 @@ where %~1 >nul 2>&1
 if errorlevel 1 (
   echo ERROR: %~2 was not found in PATH.
   echo Install %~2 and open a new terminal before running this script again.
+  exit /b 1
+)
+exit /b 0
+
+:require_node_24
+for /F "usebackq delims=" %%V in (`node -p "process.versions.node.split('.')[0]"`) do set "NODE_MAJOR=%%V"
+if not "%NODE_MAJOR%"=="24" (
+  for /F "usebackq delims=" %%V in (`node --version`) do set "NODE_VERSION=%%V"
+  echo ERROR: Node.js 24 LTS is required; found Node.js %NODE_VERSION%.
   exit /b 1
 )
 exit /b 0

@@ -7,12 +7,13 @@ name: Release Packaging
       - 'V*'
 
 env:
+  GITHUB_MIRROR_REPOSITORY: firebadnofire/rtsp-webview
   RELEASE_BODY: |
     Automated cross-platform release assets for RTSP Viewer.
 
     Assets:
     - Windows: `rtsp-viewer-windows-amd64.zip`
-    - macOS: `rtsp-viewer-macos-app.zip`
+    - macOS universal app: `rtsp-viewer-macos-app.zip`
     - Linux: `rtsp-viewer-linux-x86_64.tar.gz`
 
     macOS note:
@@ -28,49 +29,10 @@ jobs:
       fail-fast: false
       matrix:
         package:
-          - name: Windows
-            runs_on: windows-latest
-            build_shell: pwsh
-            required_tools: bash curl git jq node npm cargo rustup
-            prepare_checkout_command: |
-              if ((-not (Get-Command git -ErrorAction SilentlyContinue)) -or (-not (Get-Command bash -ErrorAction SilentlyContinue))) {
-                if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-                  Write-Error "git and bash are required before repository checkout, and Chocolatey is not available to install Git for Windows."
-                  exit 1
-                }
-                choco install git -y --no-progress
-                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-                $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-                $env:Path = "$machinePath;$userPath"
-              }
-              bash -lc 'command -v base64 >/dev/null' 2>$null
-              if ($LASTEXITCODE -ne 0) {
-                Write-Error "base64 is required inside the bash runtime before repository checkout."
-                exit 1
-              }
-            setup_command: |
-              if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
-                if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-                  Write-Error "jq is required for release publishing and Chocolatey is not available to install it."
-                  exit 1
-                }
-                choco install jq -y --no-progress
-                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-              }
-            build_command: |
-              build-helpers\windows\build-exe.bat amd64
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-              New-Item -ItemType Directory -Force -Path dist\releases | Out-Null
-              if (Test-Path dist\releases\rtsp-viewer-windows-amd64.zip) {
-                Remove-Item dist\releases\rtsp-viewer-windows-amd64.zip -Force
-              }
-              Compress-Archive -Path dist\windows\amd64\rtsp-viewer.exe -DestinationPath dist\releases\rtsp-viewer-windows-amd64.zip
-            artifact_path: dist/releases/rtsp-viewer-windows-amd64.zip
           - name: macOS
             runs_on: macos-latest
             build_shell: bash
-            required_tools: base64 curl git jq node npm cargo rustup codesign
+            required_tools: base64 curl git jq node npm cargo rustup lipo codesign
             prepare_checkout_command: |
               set -euo pipefail
               for tool in base64 git; do
@@ -79,18 +41,42 @@ jobs:
                   exit 1
                 fi
               done
-            setup_command: ""
+            setup_command: |
+              set -euo pipefail
+              for path_entry in "${HOME}/.cargo/bin" /opt/homebrew/bin /usr/local/bin; do
+                if [ -d "$path_entry" ]; then
+                  export PATH="${path_entry}:${PATH}"
+                  echo "$path_entry" >> "${GITHUB_PATH:-/tmp/github_path}"
+                fi
+              done
+              for tool in node npm cargo rustup lipo codesign jq; do
+                if ! command -v "$tool" >/dev/null 2>&1; then
+                  echo "Missing required macOS build tool after PATH bootstrap: ${tool}" >&2
+                  echo "Host-mode Forgejo runners may need ${HOME}/.cargo/bin, /opt/homebrew/bin, or /usr/local/bin added to the service environment." >&2
+                  exit 1
+                fi
+              done
+              node_major="$(node -p 'process.versions.node.split(".")[0]')"
+              if [ "$node_major" -ne 24 ]; then
+                echo "Node.js 24 LTS is required for release builds; found Node.js $(node --version)." >&2
+                exit 1
+              fi
             build_command: |
               set -euo pipefail
+              for path_entry in "${HOME}/.cargo/bin" /opt/homebrew/bin /usr/local/bin; do
+                if [ -d "$path_entry" ]; then
+                  export PATH="${path_entry}:${PATH}"
+                fi
+              done
               ./build-helpers/mac/build-app.sh
               mkdir -p dist/releases
               rm -f dist/releases/rtsp-viewer-macos-app.zip
               ditto -c -k --sequesterRsrc --keepParent "dist/macos/RTSP Viewer.app" "dist/releases/rtsp-viewer-macos-app.zip"
-            artifact_path: dist/releases/rtsp-viewer-macos-app.zip
+            artifact_paths: dist/releases/rtsp-viewer-macos-app.zip
           - name: Linux
             runs_on: ubuntu-22.04
             build_shell: bash
-            required_tools: base64 curl git jq tar
+            required_tools: base64 cargo curl git jq rustup tar x86_64-w64-mingw32-gcc zip
             prepare_checkout_command: |
               set -euo pipefail
               missing_tools=""
@@ -141,13 +127,15 @@ jobs:
                 libssl-dev \
                 libwebkit2gtk-4.0-dev \
                 librsvg2-dev \
+                mingw-w64 \
                 pkg-config \
-                tar
+                tar \
+                zip
 
               needs_node=1
               if command -v node >/dev/null 2>&1; then
                 node_major="$(node -p 'process.versions.node.split(".")[0]')"
-                if [ "$node_major" -ge 20 ]; then
+                if [ "$node_major" -eq 24 ]; then
                   needs_node=0
                 fi
               fi
@@ -157,7 +145,7 @@ jobs:
                   | gpg --dearmor \
                   | $tee_cmd /etc/apt/keyrings/nodesource.gpg >/dev/null
                 $chmod_cmd a+r /etc/apt/keyrings/nodesource.gpg
-                echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main' \
+                echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main' \
                   | $tee_cmd /etc/apt/sources.list.d/nodesource.list >/dev/null
                 $apt_get update
                 $apt_get install -y --no-install-recommends nodejs
@@ -170,9 +158,20 @@ jobs:
                 export PATH="${HOME}/.cargo/bin:${PATH}"
               fi
               rustup default stable
+              rustup target add x86_64-pc-windows-gnu
+              if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+                echo "Missing MinGW linker after installing mingw-w64: x86_64-w64-mingw32-gcc" >&2
+                exit 1
+              fi
+              node_major="$(node -p 'process.versions.node.split(".")[0]')"
+              if [ "$node_major" -ne 24 ]; then
+                echo "Node.js 24 LTS is required for release builds; found Node.js $(node --version)." >&2
+                exit 1
+              fi
             build_command: |
               set -euo pipefail
               export PATH="${HOME}/.cargo/bin:${PATH}"
+              export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="${CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER:-x86_64-w64-mingw32-gcc}"
 
               npm --prefix ui ci
               npm --prefix ui run build
@@ -188,9 +187,22 @@ jobs:
 
               cargo build --locked --release -p rtsp_viewer_tauri
 
-              release_bin="target/release/rtsp_viewer_tauri"
-              if [ ! -f "${release_bin}" ]; then
-                echo "Linux release build did not produce ${release_bin}." >&2
+              linux_release_bin="target/release/rtsp_viewer_tauri"
+              if [ ! -f "${linux_release_bin}" ]; then
+                echo "Linux release build did not produce ${linux_release_bin}." >&2
+                exit 1
+              fi
+
+              cargo build --locked --release --target x86_64-pc-windows-gnu -p rtsp_viewer_tauri
+
+              windows_release_bin="target/x86_64-pc-windows-gnu/release/rtsp_viewer_tauri.exe"
+              if [ ! -f "${windows_release_bin}" ]; then
+                echo "Windows GNU cross-build did not produce ${windows_release_bin}." >&2
+                exit 1
+              fi
+              windows_webview2_loader="target/x86_64-pc-windows-gnu/release/WebView2Loader.dll"
+              if [ ! -f "${windows_webview2_loader}" ]; then
+                echo "Windows GNU cross-build did not produce ${windows_webview2_loader}." >&2
                 exit 1
               fi
 
@@ -199,11 +211,21 @@ jobs:
               package_root="dist/linux/rtsp-viewer-${version}-linux-x86_64"
               rm -rf "${package_root}"
               mkdir -p "${package_root}"
-              install -m 0755 "${release_bin}" "${package_root}/rtsp_viewer_tauri"
+              install -m 0755 "${linux_release_bin}" "${package_root}/rtsp_viewer_tauri"
               install -m 0644 LICENSE "${package_root}/LICENSE"
               install -m 0644 build-helpers/linux/runtime-notes.txt "${package_root}/README-linux.txt"
               tar -C dist/linux -czf dist/releases/rtsp-viewer-linux-x86_64.tar.gz "$(basename "${package_root}")"
-            artifact_path: dist/releases/rtsp-viewer-linux-x86_64.tar.gz
+
+              windows_output_dir="dist/windows/amd64"
+              rm -rf "${windows_output_dir}"
+              mkdir -p "${windows_output_dir}"
+              install -m 0755 "${windows_release_bin}" "${windows_output_dir}/rtsp-viewer.exe"
+              install -m 0644 "${windows_webview2_loader}" "${windows_output_dir}/WebView2Loader.dll"
+              rm -f dist/releases/rtsp-viewer-windows-amd64.zip
+              zip -j dist/releases/rtsp-viewer-windows-amd64.zip \
+                "${windows_output_dir}/rtsp-viewer.exe" \
+                "${windows_output_dir}/WebView2Loader.dll"
+            artifact_paths: dist/releases/rtsp-viewer-linux-x86_64.tar.gz dist/releases/rtsp-viewer-windows-amd64.zip
 
     steps:
       - name: Prepare checkout runtime
@@ -276,6 +298,35 @@ jobs:
           git submodule sync --recursive
           git submodule update --init --recursive --depth=1
 
+      - name: Validate GitHub mirror inputs
+        shell: bash
+        env:
+          GH_KEY: ${{ secrets.GH_KEY }}
+          GITHUB_MIRROR_REPOSITORY: ${{ env.GITHUB_MIRROR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_KEY:-}" ]; then
+            echo "Missing required secret: GH_KEY" >&2
+            echo "GH_KEY must be able to push refs and publish releases to ${GITHUB_MIRROR_REPOSITORY:-the GitHub mirror repository}." >&2
+            exit 1
+          fi
+
+          case "${GITHUB_MIRROR_REPOSITORY:-}" in
+            */*) ;;
+            *)
+              echo "GITHUB_MIRROR_REPOSITORY must be in owner/name form." >&2
+              exit 1
+              ;;
+          esac
+
+          mirror_owner="${GITHUB_MIRROR_REPOSITORY%%/*}"
+          mirror_repo="${GITHUB_MIRROR_REPOSITORY#*/}"
+          if [ -z "$mirror_owner" ] || [ -z "$mirror_repo" ]; then
+            echo "GITHUB_MIRROR_REPOSITORY must include both owner and repository name." >&2
+            exit 1
+          fi
+
       - name: Run environment setup
         if: ${{ matrix.package.setup_command != '' }}
         shell: ${{ matrix.package.build_shell }}
@@ -284,7 +335,7 @@ jobs:
       - name: Validate packaging inputs
         shell: bash
         env:
-          ARTIFACT_PATH: ${{ matrix.package.artifact_path }}
+          ARTIFACT_PATHS: ${{ matrix.package.artifact_paths }}
           BUILD_COMMAND: ${{ matrix.package.build_command }}
           REQUIRED_TOOLS: ${{ matrix.package.required_tools }}
         run: |
@@ -295,10 +346,16 @@ jobs:
             exit 1
           fi
 
-          if [ -z "${ARTIFACT_PATH:-}" ]; then
-            echo "Missing matrix artifact_path for ${RUNNER_OS:-unknown runner OS}." >&2
+          if [ -z "${ARTIFACT_PATHS:-}" ]; then
+            echo "Missing matrix artifact_paths for ${RUNNER_OS:-unknown runner OS}." >&2
             exit 1
           fi
+
+          for path_entry in "${HOME}/.cargo/bin" /opt/homebrew/bin /usr/local/bin; do
+            if [ -d "$path_entry" ]; then
+              export PATH="${path_entry}:${PATH}"
+            fi
+          done
 
           for tool in $REQUIRED_TOOLS; do
             if ! command -v "$tool" >/dev/null 2>&1; then
@@ -314,24 +371,26 @@ jobs:
       - name: Validate release artifact
         shell: bash
         env:
-          ARTIFACT_PATH: ${{ matrix.package.artifact_path }}
+          ARTIFACT_PATHS: ${{ matrix.package.artifact_paths }}
         run: |
           set -euo pipefail
 
-          if [ ! -f "$ARTIFACT_PATH" ]; then
-            echo "Release artifact does not exist or is not a file: ${ARTIFACT_PATH}" >&2
-            exit 1
-          fi
+          for artifact_path in $ARTIFACT_PATHS; do
+            if [ ! -f "$artifact_path" ]; then
+              echo "Release artifact does not exist or is not a file: ${artifact_path}" >&2
+              exit 1
+            fi
 
-          if [ ! -s "$ARTIFACT_PATH" ]; then
-            echo "Release artifact is empty: ${ARTIFACT_PATH}" >&2
-            exit 1
-          fi
+            if [ ! -s "$artifact_path" ]; then
+              echo "Release artifact is empty: ${artifact_path}" >&2
+              exit 1
+            fi
+          done
 
       - name: Publish Forgejo release
         shell: bash
         env:
-          ARTIFACT_PATH: ${{ matrix.package.artifact_path }}
+          ARTIFACT_PATHS: ${{ matrix.package.artifact_paths }}
           FORGEJO_TOKEN: ${{ forgejo.token }}
           INPUT_RELEASE_BODY: ${{ env.RELEASE_BODY }}
         run: |
@@ -347,7 +406,7 @@ jobs:
           token="${FORGEJO_TOKEN:-${GITHUB_TOKEN:?Missing Forgejo token}}"
           owner="${repository%%/*}"
           repo="${repository#*/}"
-          asset_path="${ARTIFACT_PATH:?Missing artifact path}"
+          asset_paths="${ARTIFACT_PATHS:?Missing artifact paths}"
           release_name="RTSP Viewer ${tag}"
           release_body="${INPUT_RELEASE_BODY:-Automated release for ${tag}.}"
 
@@ -452,15 +511,369 @@ jobs:
             exit 1
           fi
 
-          asset_name="$(basename "$asset_path")"
-          asset_name_encoded="$(jq -nr --arg value "$asset_name" '$value|@uri')"
-          existing_asset_id="$(api_request GET "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets" \
-            | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' \
-            | head -n 1)"
+          for asset_path in $asset_paths; do
+            if [ ! -f "$asset_path" ]; then
+              echo "Release asset does not exist or is not a file: ${asset_path}" >&2
+              exit 1
+            fi
 
-          if [ -n "$existing_asset_id" ]; then
-            api_request DELETE "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets/${existing_asset_id}" >/dev/null
+            asset_name="$(basename "$asset_path")"
+            asset_name_encoded="$(jq -nr --arg value "$asset_name" '$value|@uri')"
+            existing_asset_id="$(api_request GET "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets" \
+              | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' \
+              | head -n 1)"
+
+            if [ -n "$existing_asset_id" ]; then
+              api_request DELETE "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets/${existing_asset_id}" >/dev/null
+            fi
+
+            api_request POST "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
+              --form "attachment=@${asset_path}" >/dev/null
+          done
+
+      - name: Mirror repository to GitHub
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+          GH_KEY: ${{ secrets.GH_KEY }}
+          GITHUB_MIRROR_REPOSITORY: ${{ env.GITHUB_MIRROR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+
+          github_repository="${GITHUB_MIRROR_REPOSITORY:?Missing GitHub mirror repository}"
+          github_owner="${github_repository%%/*}"
+          github_repo="${github_repository#*/}"
+          github_api_url="https://api.github.com"
+          github_remote_url="https://github.com/${github_owner}/${github_repo}.git"
+          github_token="${GH_KEY:?Missing GH_KEY secret for GitHub mirroring}"
+
+          forgejo_server_url="${FORGEJO_SERVER_URL:-${GITHUB_SERVER_URL:-}}"
+          forgejo_repository="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
+          forgejo_token="${FORGEJO_TOKEN:-${GITHUB_TOKEN:-}}"
+
+          if [ -z "$forgejo_server_url" ]; then
+            echo "Missing Forgejo server URL." >&2
+            exit 1
           fi
 
-          api_request POST "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
-            --form "attachment=@${asset_path}" >/dev/null
+          if [ -z "$forgejo_repository" ]; then
+            echo "Missing Forgejo repository name." >&2
+            exit 1
+          fi
+
+          case "$github_remote_url" in
+            https://*) ;;
+            *)
+              echo "GitHub remote URL must use https: ${github_remote_url}" >&2
+              exit 1
+              ;;
+          esac
+
+          github_request() {
+            local method="$1"
+            local url="$2"
+            local response_file
+            local status
+            shift 2
+            response_file="$(mktemp)"
+            status="$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --request "$method" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${github_token}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "$@" \
+              "$url")"
+            if [ "$status" -lt 200 ] || [ "$status" -gt 299 ]; then
+              cat "$response_file" >&2
+              echo "GitHub API request failed: ${method} ${url} returned HTTP ${status}" >&2
+              exit 1
+            fi
+            cat "$response_file"
+          }
+
+          github_repo_status() {
+            local response_file
+            response_file="$(mktemp)"
+            curl --proto '=https' --tlsv1.2 --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${github_token}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "${github_api_url}/repos/${github_owner}/${github_repo}"
+          }
+
+          ensure_github_repository() {
+            local repo_status
+            local owner_json
+            local owner_type
+            local create_payload
+            local create_response_file
+            local create_status
+
+            repo_status="$(github_repo_status)"
+            if [ "$repo_status" = "200" ]; then
+              return 0
+            fi
+            if [ "$repo_status" != "404" ]; then
+              echo "Failed to check GitHub repository ${github_repository}: HTTP ${repo_status}" >&2
+              exit 1
+            fi
+
+            owner_json="$(github_request GET "${github_api_url}/users/${github_owner}")"
+            owner_type="$(printf '%s' "$owner_json" | jq -r '.type')"
+            create_payload="$(jq -n \
+              --arg name "$github_repo" \
+              --arg description "RTSP Viewer desktop app" \
+              '{name: $name, description: $description, private: false, auto_init: false}')"
+            create_response_file="$(mktemp)"
+
+            if [ "$owner_type" = "Organization" ]; then
+              create_status="$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+                --output "$create_response_file" \
+                --write-out "%{http_code}" \
+                --request POST \
+                --header "Accept: application/vnd.github+json" \
+                --header "Authorization: Bearer ${github_token}" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                --header "Content-Type: application/json" \
+                --data "$create_payload" \
+                "${github_api_url}/orgs/${github_owner}/repos")"
+            elif [ "$owner_type" = "User" ]; then
+              authenticated_login="$(github_request GET "${github_api_url}/user" | jq -r '.login')"
+              if [ "$authenticated_login" != "$github_owner" ]; then
+                echo "Cannot create ${github_repository}: GH_KEY authenticates as ${authenticated_login}, not ${github_owner}." >&2
+                exit 1
+              fi
+              create_status="$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+                --output "$create_response_file" \
+                --write-out "%{http_code}" \
+                --request POST \
+                --header "Accept: application/vnd.github+json" \
+                --header "Authorization: Bearer ${github_token}" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                --header "Content-Type: application/json" \
+                --data "$create_payload" \
+                "${github_api_url}/user/repos")"
+            else
+              echo "Unsupported GitHub owner type for ${github_owner}: ${owner_type}" >&2
+              exit 1
+            fi
+
+            if [ "$create_status" = "200" ] || [ "$create_status" = "201" ]; then
+              return 0
+            fi
+            if [ "$create_status" = "409" ] || [ "$create_status" = "422" ]; then
+              repo_status="$(github_repo_status)"
+              if [ "$repo_status" = "200" ]; then
+                return 0
+              fi
+            fi
+
+            cat "$create_response_file" >&2
+            echo "Failed to create GitHub repository ${github_repository}: HTTP ${create_status}" >&2
+            exit 1
+          }
+
+          git_push_github() {
+            local auth_header
+            auth_header="$(printf 'x-access-token:%s' "$github_token" | base64 | tr -d '\n')"
+            git -c "http.${github_remote_url}.extraheader=AUTHORIZATION: basic ${auth_header}" \
+              push "$github_remote_url" "$@"
+          }
+
+          fetch_forgejo_refs() {
+            local forgejo_remote_url="${forgejo_server_url%/}/${forgejo_repository}.git"
+            case "$forgejo_remote_url" in
+              https://*) ;;
+              *)
+                echo "Forgejo remote URL must use https: ${forgejo_remote_url}" >&2
+                exit 1
+                ;;
+            esac
+
+            if [ -n "$forgejo_token" ]; then
+              forgejo_auth_header="$(printf 'x-access-token:%s' "$forgejo_token" | base64 | tr -d '\n')"
+              git -c "http.${forgejo_remote_url}.extraheader=AUTHORIZATION: basic ${forgejo_auth_header}" \
+                fetch --force --tags --prune origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+            else
+              git fetch --force --tags --prune origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+            fi
+          }
+
+          ensure_github_repository
+          fetch_forgejo_refs
+
+          branch_refspecs=()
+          while read -r ref_name short_name; do
+            short_name="${short_name#origin/}"
+            if [ "$short_name" = "HEAD" ]; then
+              continue
+            fi
+            branch_refspecs+=("${ref_name}:refs/heads/${short_name}")
+          done < <(git for-each-ref --format='%(refname) %(refname:short)' refs/remotes/origin)
+
+          if [ "${#branch_refspecs[@]}" -gt 0 ]; then
+            git_push_github "${branch_refspecs[@]}"
+          else
+            echo "No Forgejo branches were found to mirror." >&2
+            exit 1
+          fi
+
+          git_push_github "refs/tags/*:refs/tags/*"
+
+      - name: Publish GitHub release assets
+        shell: bash
+        env:
+          ARTIFACT_PATHS: ${{ matrix.package.artifact_paths }}
+          GH_KEY: ${{ secrets.GH_KEY }}
+          GITHUB_MIRROR_REPOSITORY: ${{ env.GITHUB_MIRROR_REPOSITORY }}
+          INPUT_RELEASE_BODY: ${{ env.RELEASE_BODY }}
+        run: |
+          set -euo pipefail
+
+          github_repository="${GITHUB_MIRROR_REPOSITORY:?Missing GitHub mirror repository}"
+          owner="${github_repository%%/*}"
+          repo="${github_repository#*/}"
+          api_url="https://api.github.com"
+          upload_url="https://uploads.github.com"
+          tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:-}}"
+          if [ -z "$tag" ]; then
+            tag="${FORGEJO_REF:-${GITHUB_REF:-}}"
+            tag="${tag#refs/tags/}"
+          fi
+          token="${GH_KEY:?Missing GH_KEY secret for GitHub release publishing}"
+          asset_paths="${ARTIFACT_PATHS:?Missing artifact paths}"
+          release_name="RTSP Viewer ${tag}"
+          release_body="${INPUT_RELEASE_BODY:-Automated release for ${tag}.}"
+
+          if [ -z "$tag" ]; then
+            echo "Missing release tag. Run this workflow on a tag ref." >&2
+            exit 1
+          fi
+
+          github_request() {
+            local method="$1"
+            local url="$2"
+            local response_file
+            local status
+            shift 2
+            response_file="$(mktemp)"
+            status="$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --request "$method" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${token}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "$@" \
+              "$url")"
+            if [ "$status" -lt 200 ] || [ "$status" -gt 299 ]; then
+              cat "$response_file" >&2
+              echo "GitHub API request failed: ${method} ${url} returned HTTP ${status}" >&2
+              exit 1
+            fi
+            cat "$response_file"
+          }
+
+          fetch_release_by_tag() {
+            local response_file
+            local status
+
+            response_file="$(mktemp)"
+            status="$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${token}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "${api_url}/repos/${owner}/${repo}/releases/tags/${tag}")"
+
+            if [ "$status" = "200" ]; then
+              cat "$response_file"
+              return 0
+            fi
+            if [ "$status" = "404" ]; then
+              return 1
+            fi
+
+            cat "$response_file" >&2
+            echo "Failed to look up GitHub release for ${tag}: HTTP ${status}" >&2
+            exit 1
+          }
+
+          release_payload="$(jq -n \
+            --arg tag "$tag" \
+            --arg name "$release_name" \
+            --arg body "$release_body" \
+            '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false, make_latest: "true"}')"
+
+          create_release() {
+            local response_file
+            local status
+
+            response_file="$(mktemp)"
+            status="$(curl --proto '=https' --tlsv1.2 --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${token}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --header "Content-Type: application/json" \
+              --data "$release_payload" \
+              "${api_url}/repos/${owner}/${repo}/releases")"
+
+            if [ "$status" = "200" ] || [ "$status" = "201" ]; then
+              cat "$response_file"
+              return 0
+            fi
+            if [ "$status" = "409" ] || [ "$status" = "422" ]; then
+              if release_json="$(fetch_release_by_tag)"; then
+                printf '%s' "$release_json"
+                return 0
+              fi
+            fi
+
+            cat "$response_file" >&2
+            echo "Failed to create GitHub release for ${tag}: HTTP ${status}" >&2
+            exit 1
+          }
+
+          if release_json="$(fetch_release_by_tag)"; then
+            release_id="$(printf '%s' "$release_json" | jq -r '.id')"
+            release_json="$(github_request PATCH "${api_url}/repos/${owner}/${repo}/releases/${release_id}" \
+              --header "Content-Type: application/json" \
+              --data "$release_payload")"
+          else
+            release_json="$(create_release)"
+          fi
+
+          release_id="$(printf '%s' "$release_json" | jq -r '.id')"
+          if [ -z "$release_id" ] || [ "$release_id" = "null" ]; then
+            echo "GitHub release response did not include an id." >&2
+            exit 1
+          fi
+
+          for asset_path in $asset_paths; do
+            if [ ! -f "$asset_path" ]; then
+              echo "GitHub release asset does not exist or is not a file: ${asset_path}" >&2
+              exit 1
+            fi
+
+            asset_name="$(basename "$asset_path")"
+            asset_name_encoded="$(jq -nr --arg value "$asset_name" '$value|@uri')"
+            existing_asset_id="$(github_request GET "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets" \
+              | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' \
+              | head -n 1)"
+
+            if [ -n "$existing_asset_id" ]; then
+              github_request DELETE "${api_url}/repos/${owner}/${repo}/releases/assets/${existing_asset_id}" >/dev/null
+            fi
+
+            github_request POST "${upload_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
+              --header "Content-Type: application/octet-stream" \
+              --data-binary "@${asset_path}" >/dev/null
+          done

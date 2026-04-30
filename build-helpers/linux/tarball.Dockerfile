@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:20-bullseye AS toolchain
+FROM node:24-bullseye AS toolchain
 
 ARG APT_HTTP_PROXY=""
 
@@ -34,6 +34,9 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
 WORKDIR /work
 
 FROM toolchain AS build
+
+RUN set -eux; \
+    test "$(node -p 'process.versions.node.split(".")[0]')" = "24"
 
 COPY Cargo.toml /work/Cargo.toml
 COPY Cargo.lock /work/Cargo.lock

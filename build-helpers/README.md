@@ -41,7 +41,7 @@ build-helpers\windows\build-exe.bat aarch64
 
 This script:
 
-1. checks that `node`, `npm`, `cargo`, and `rustup` are installed
+1. checks that Node.js 24 LTS, `npm`, `cargo`, and `rustup` are installed
 2. verifies the selected Rust target is installed
 3. runs `npm ci` in `ui`
 4. builds the frontend bundle
@@ -77,13 +77,13 @@ rustup target add x86_64-pc-windows-msvc
 rustup target add i686-pc-windows-msvc
 rustup target add aarch64-pc-windows-msvc
 
-# NodeJS
+# Node.js 24 LTS
 winget install OpenJS.NodeJS.LTS
 ```
 
 Required Windows programs:
 
-- Node.js LTS with npm
+- Node.js 24 LTS with npm
 - rustup with a stable MSVC Rust toolchain
 - Visual Studio 2022 Build Tools with Desktop development with C++
 - Windows SDK installed through Visual Studio Build Tools
@@ -140,7 +140,7 @@ From the repository root, run:
 ./build-helpers/linux/build-tarball.sh
 ```
 
-This repository includes a Docker-based Linux build pipeline for the Tauri desktop app.
+This repository includes a Docker-based Linux build pipeline for the Tauri desktop app. The builder image uses Node.js 24 LTS.
 
 In non-interactive runs, it falls back to the current machine's native Linux architecture when recognized, otherwise `linux/amd64`.
 
@@ -190,13 +190,17 @@ On macOS, from the repository root, run:
 
 This script exits immediately on non-macOS systems.
 
-It intentionally builds for the current macOS machine architecture and does not present a target-selection prompt.
+It builds a universal macOS app for both Intel and Apple Silicon. It does not
+present a target-selection prompt.
 
 It uses the current machine's native macOS tooling to:
 
 - run `npm ci`
 - build the frontend bundle
-- build the release Rust binary
+- install the Rust `x86_64-apple-darwin` and `aarch64-apple-darwin` targets
+- build both release Rust binaries
+- combine them with `lipo`
+- verify the final app executable contains both `x86_64` and `arm64`
 - assemble `RTSP Viewer.app`
 - try to generate an `.icns` file from `src-tauri/icons/icon.png`
 - ad-hoc sign the app bundle with `codesign`
@@ -227,11 +231,14 @@ Runtime note:
 
 Required tools:
 
-- `node`
+- Node.js 24 LTS as `node`
 - `npm`
 - `cargo`
 - `rustup`
+- `lipo`
 - `codesign`
+
+The UI package enforces Node.js 24 during dependency installation.
 
 Optional tools for a custom Finder icon:
 
