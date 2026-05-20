@@ -134,6 +134,7 @@ jobs:
               $apt_get install -y --no-install-recommends \
                 build-essential \
                 ca-certificates \
+                clang \
                 coreutils \
                 curl \
                 docker.io \
@@ -189,6 +190,9 @@ jobs:
               if ! command -v lld-link >/dev/null 2>&1; then
                 link_versioned_tool lld-link || true
               fi
+              if ! command -v clang-cl >/dev/null 2>&1; then
+                link_versioned_tool clang-cl || true
+              fi
               tauri_version=""
               if command -v cargo-tauri >/dev/null 2>&1; then
                 tauri_version="$(cargo tauri --version 2>/dev/null || true)"
@@ -210,6 +214,10 @@ jobs:
               fi
               if ! command -v llvm-rc >/dev/null 2>&1; then
                 echo "Missing LLVM resource compiler after installation: llvm-rc" >&2
+                exit 1
+              fi
+              if ! command -v clang-cl >/dev/null 2>&1; then
+                echo "Missing clang-cl after installation." >&2
                 exit 1
               fi
               node_major="$(node -p 'process.versions.node.split(".")[0]')"
