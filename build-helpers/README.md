@@ -58,10 +58,16 @@ It also keeps an architecture-specific copy under:
 dist\windows\<architecture>\rtsp-viewer.exe
 ```
 
-The CI packaging workflow wraps the `amd64` build into this release archive:
+The CI packaging workflow ships a portable Windows ZIP:
 
 ```text
-dist/releases/rtsp-viewer-windows-amd64.zip
+dist/releases/rtsp-viewer-windows-amd64-portable.zip
+```
+
+It also builds a Windows MSI installer on a Windows runner using Tauri's WiX-based bundler:
+
+```text
+dist/releases/rtsp-viewer-windows-amd64-installer.msi
 ```
 
 Required Windows programs can be installed with:
@@ -91,6 +97,11 @@ Required Windows programs:
 Recommended runtime dependency:
 
 - Microsoft Edge WebView2 Runtime
+
+Installer note:
+
+- the shipped MSI uses Tauri's Windows bundler
+- it is built only on Windows because `.msi` creation is not supported by cross-compilation
 
 ### Install
 

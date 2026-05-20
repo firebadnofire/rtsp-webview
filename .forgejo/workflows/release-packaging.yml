@@ -12,7 +12,8 @@ env:
     Automated cross-platform release assets for RTSP Viewer.
 
     Assets:
-    - Windows: `rtsp-viewer-windows-amd64.zip`
+    - Windows portable: `rtsp-viewer-windows-amd64-portable.zip`
+    - Windows installer: `rtsp-viewer-windows-amd64-installer.msi`
     - macOS universal app: `rtsp-viewer-macos-app.zip`
     - Linux: `rtsp-viewer-linux-x86_64.tar.gz`
 
@@ -76,7 +77,7 @@ jobs:
           - name: Linux
             runs_on: ubuntu-22.04
             build_shell: bash
-            required_tools: base64 cargo curl git jq rustup tar x86_64-w64-mingw32-gcc zip
+            required_tools: base64 cargo curl git jq rustup tar
             prepare_checkout_command: |
               set -euo pipefail
               missing_tools=""
@@ -129,7 +130,6 @@ jobs:
                 libssl-dev \
                 libwebkit2gtk-4.0-dev \
                 librsvg2-dev \
-                mingw-w64 \
                 pkg-config \
                 tar \
                 zip
@@ -160,11 +160,6 @@ jobs:
                 export PATH="${HOME}/.cargo/bin:${PATH}"
               fi
               rustup default stable
-              rustup target add x86_64-pc-windows-gnu
-              if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-                echo "Missing MinGW linker after installing mingw-w64: x86_64-w64-mingw32-gcc" >&2
-                exit 1
-              fi
               node_major="$(node -p 'process.versions.node.split(".")[0]')"
               if [ "$node_major" -ne 24 ]; then
                 echo "Node.js 24 LTS is required for release builds; found Node.js $(node --version)." >&2
@@ -173,7 +168,6 @@ jobs:
             build_command: |
               set -euo pipefail
               export PATH="${HOME}/.cargo/bin:${PATH}"
-              export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="${CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER:-x86_64-w64-mingw32-gcc}"
 
               npm --prefix ui ci
               npm --prefix ui run build
@@ -195,19 +189,6 @@ jobs:
                 exit 1
               fi
 
-              cargo build --locked --release --target x86_64-pc-windows-gnu -p rtsp_viewer_tauri
-
-              windows_release_bin="target/x86_64-pc-windows-gnu/release/rtsp_viewer_tauri.exe"
-              if [ ! -f "${windows_release_bin}" ]; then
-                echo "Windows GNU cross-build did not produce ${windows_release_bin}." >&2
-                exit 1
-              fi
-              windows_webview2_loader="target/x86_64-pc-windows-gnu/release/WebView2Loader.dll"
-              if [ ! -f "${windows_webview2_loader}" ]; then
-                echo "Windows GNU cross-build did not produce ${windows_webview2_loader}." >&2
-                exit 1
-              fi
-
               version="$(cargo pkgid -p rtsp_viewer_tauri | sed 's/.*@//')"
               mkdir -p dist/releases
               package_root="dist/linux/rtsp-viewer-${version}-linux-x86_64"
@@ -217,17 +198,144 @@ jobs:
               install -m 0644 LICENSE "${package_root}/LICENSE"
               install -m 0644 build-helpers/linux/runtime-notes.txt "${package_root}/README-linux.txt"
               tar -C dist/linux -czf dist/releases/rtsp-viewer-linux-x86_64.tar.gz "$(basename "${package_root}")"
+            artifact_paths: dist/releases/rtsp-viewer-linux-x86_64.tar.gz
+          - name: Windows
+            runs_on: windows-latest
+            build_shell: pwsh
+            required_tools: cargo git npm rustup powershell
+            prepare_checkout_command: |
+              $ErrorActionPreference = 'Stop'
+              foreach ($tool in @('git', 'powershell')) {
+                if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+                  throw "Missing required checkout tool: $tool"
+                }
+              }
+            setup_command: |
+              $ErrorActionPreference = 'Stop'
 
-              windows_output_dir="dist/windows/amd64"
-              rm -rf "${windows_output_dir}"
-              mkdir -p "${windows_output_dir}"
-              install -m 0755 "${windows_release_bin}" "${windows_output_dir}/rtsp-viewer.exe"
-              install -m 0644 "${windows_webview2_loader}" "${windows_output_dir}/WebView2Loader.dll"
-              rm -f dist/releases/rtsp-viewer-windows-amd64.zip
-              zip -j dist/releases/rtsp-viewer-windows-amd64.zip \
-                "${windows_output_dir}/rtsp-viewer.exe" \
-                "${windows_output_dir}/WebView2Loader.dll"
-            artifact_paths: dist/releases/rtsp-viewer-linux-x86_64.tar.gz dist/releases/rtsp-viewer-windows-amd64.zip
+              function Get-NodeMajorVersion {
+                if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+                  return $null
+                }
+
+                return (& node -p "process.versions.node.split('.')[0]").Trim()
+              }
+
+              $cargoBin = Join-Path $HOME '.cargo\bin'
+              if (Test-Path $cargoBin) {
+                $env:Path = "$cargoBin;$env:Path"
+                if ($env:GITHUB_PATH) {
+                  Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
+                }
+              }
+
+              $nodeMajor = Get-NodeMajorVersion
+              if ($nodeMajor -ne '24') {
+                if (Get-Command choco -ErrorAction SilentlyContinue) {
+                  choco install nodejs-lts --version=24.11.1 -y --no-progress
+                } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
+                  winget install OpenJS.NodeJS.LTS --version 24.11.1 --accept-package-agreements --accept-source-agreements
+                } else {
+                  throw "Node.js 24 LTS is required and no supported package manager is available to install it."
+                }
+              }
+
+              if (-not (Get-Command cargo -ErrorAction SilentlyContinue) -or -not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+                $rustupInit = Join-Path $env:TEMP 'rustup-init.exe'
+                Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $rustupInit
+                & $rustupInit -y --profile minimal --default-toolchain stable
+                if ($LASTEXITCODE -ne 0) {
+                  throw 'rustup-init failed.'
+                }
+
+                $env:Path = "$cargoBin;$env:Path"
+                if ($env:GITHUB_PATH) {
+                  Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
+                }
+              }
+
+              rustup default stable
+              rustup target add x86_64-pc-windows-msvc
+
+              $nodeMajor = Get-NodeMajorVersion
+              if ($nodeMajor -ne '24') {
+                $nodeVersion = if (Get-Command node -ErrorAction SilentlyContinue) { (& node --version).Trim() } else { 'missing' }
+                throw "Node.js 24 LTS is required for release builds; found Node.js $nodeVersion."
+              }
+            build_command: |
+              $ErrorActionPreference = 'Stop'
+              $cargoBin = Join-Path $HOME '.cargo\bin'
+              $env:Path = "$cargoBin;$env:Path"
+
+              npm --prefix ui ci
+
+              $tauriVersion = ''
+              try {
+                $tauriVersion = (& cargo tauri --version 2>$null).Trim()
+              } catch {
+                $tauriVersion = ''
+              }
+
+              if (-not $tauriVersion.StartsWith('tauri-cli 1.')) {
+                cargo install tauri-cli --locked --force --version "^1"
+              }
+
+              cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+              cargo tauri build --ci --bundles msi --target x86_64-pc-windows-msvc
+
+              $releaseCandidates = @(
+                'target\x86_64-pc-windows-msvc\release',
+                'src-tauri\target\x86_64-pc-windows-msvc\release',
+                'target\release',
+                'src-tauri\target\release'
+              ) | ForEach-Object { Join-Path $PWD $_ }
+
+              $releaseDir = $releaseCandidates | Where-Object { Test-Path (Join-Path $_ 'rtsp_viewer_tauri.exe') } | Select-Object -First 1
+              if (-not $releaseDir) {
+                throw 'Windows release build did not produce rtsp_viewer_tauri.exe in an expected release directory.'
+              }
+
+              $releaseExe = Join-Path $releaseDir 'rtsp_viewer_tauri.exe'
+              $webView2Loader = Join-Path $releaseDir 'WebView2Loader.dll'
+              if (-not (Test-Path $webView2Loader)) {
+                throw "Windows release build did not produce $webView2Loader."
+              }
+
+              $bundleRoots = @(
+                (Join-Path $PWD 'src-tauri'),
+                (Join-Path $PWD 'target')
+              ) | Where-Object { Test-Path $_ }
+
+              $msi = Get-ChildItem -Path $bundleRoots -Recurse -Filter *.msi -File |
+                Sort-Object LastWriteTimeUtc -Descending |
+                Select-Object -First 1
+              if (-not $msi) {
+                throw 'Tauri MSI bundle was not produced.'
+              }
+
+              $portableDir = Join-Path $PWD 'dist\windows\amd64-portable'
+              $portableExe = Join-Path $portableDir 'rtsp-viewer.exe'
+              $portableLoader = Join-Path $portableDir 'WebView2Loader.dll'
+              $releaseDirOut = Join-Path $PWD 'dist\releases'
+              $portableZip = Join-Path $releaseDirOut 'rtsp-viewer-windows-amd64-portable.zip'
+              $installerMsi = Join-Path $releaseDirOut 'rtsp-viewer-windows-amd64-installer.msi'
+
+              if (Test-Path $portableDir) {
+                Remove-Item -LiteralPath $portableDir -Recurse -Force
+              }
+              New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+              New-Item -ItemType Directory -Path $releaseDirOut -Force | Out-Null
+
+              Copy-Item -LiteralPath $releaseExe -Destination $portableExe -Force
+              Copy-Item -LiteralPath $webView2Loader -Destination $portableLoader -Force
+
+              if (Test-Path $portableZip) {
+                Remove-Item -LiteralPath $portableZip -Force
+              }
+              Compress-Archive -Path $portableExe, $portableLoader -DestinationPath $portableZip -CompressionLevel Optimal
+
+              Copy-Item -LiteralPath $msi.FullName -Destination $installerMsi -Force
+            artifact_paths: dist/releases/rtsp-viewer-windows-amd64-portable.zip dist/releases/rtsp-viewer-windows-amd64-installer.msi
 
     steps:
       - name: Prepare checkout runtime
