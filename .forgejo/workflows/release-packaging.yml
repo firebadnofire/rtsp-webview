@@ -136,6 +136,7 @@ jobs:
                 ca-certificates \
                 coreutils \
                 curl \
+                docker.io \
                 file \
                 git \
                 gnupg \
@@ -197,6 +198,10 @@ jobs:
               fi
               if ! command -v cargo-xwin >/dev/null 2>&1; then
                 echo "Missing cargo-xwin after installation." >&2
+                exit 1
+              fi
+              if ! command -v docker >/dev/null 2>&1; then
+                echo "Missing Docker CLI after installation: docker" >&2
                 exit 1
               fi
               if ! command -v makensis >/dev/null 2>&1; then
