@@ -64,10 +64,10 @@ The CI packaging workflow ships a portable Windows ZIP:
 dist/releases/rtsp-viewer-windows-amd64-portable.zip
 ```
 
-It also builds a Windows MSI installer on a Windows runner using Tauri's WiX-based bundler:
+It also builds a Windows installer executable on Linux using Tauri's experimental NSIS cross-compilation path:
 
 ```text
-dist/releases/rtsp-viewer-windows-amd64-installer.msi
+dist/releases/rtsp-viewer-windows-amd64-installer.exe
 ```
 
 Required Windows programs can be installed with:
@@ -100,8 +100,9 @@ Recommended runtime dependency:
 
 Installer note:
 
-- the shipped MSI uses Tauri's Windows bundler
-- it is built only on Windows because `.msi` creation is not supported by cross-compilation
+- the shipped Windows installer is an `.exe` produced by Tauri's NSIS bundler
+- this Linux-hosted installer path is experimental in Tauri v1
+- cross-platform signing is not supported in this path, so the installer will be unsigned unless the build strategy changes
 
 ### Install
 
@@ -185,10 +186,10 @@ rtsp-viewer-0.1.0-linux-x86_64.tar.gz
 
 The tarball includes the compiled binary, the project license, and Linux runtime notes.
 
-The CI packaging workflow copies the generated `x86_64` tarball to this stable release path:
+The CI packaging workflow uses the generated `x86_64` tarball as an internal packaging input, then publishes this stable AppImage release artifact:
 
 ```text
-dist/releases/rtsp-viewer-linux-x86_64.tar.gz
+dist/releases/rtsp-viewer-linux-x86_64.AppImage
 ```
 
 ## macOS App Helper
