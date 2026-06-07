@@ -267,43 +267,49 @@ jobs:
               cargo fetch --locked --manifest-path src-tauri/Cargo.toml
               cargo tauri build --ci --bundles nsis --runner cargo-xwin --target x86_64-pc-windows-msvc
 
+              windows_artifact_roots=()
+              for artifact_root in target src-tauri/target; do
+                if [ -d "${artifact_root}" ]; then
+                  windows_artifact_roots+=("${artifact_root}")
+                fi
+              done
+              if [ "${#windows_artifact_roots[@]}" -eq 0 ]; then
+                echo "Windows MSVC cross-build did not produce a target directory to inspect." >&2
+                exit 1
+              fi
+
               echo "Windows executable candidates:"
-              find target src-tauri/target \
+              find "${windows_artifact_roots[@]}" \
                 -type f \
                 -name '*.exe' \
                 ! -path '*/deps/*' \
                 ! -path '*/bundle/*' \
-                -print 2>/dev/null | sort
+                -print | sort
 
-              windows_release_bin="$(find target src-tauri/target \
-                -type f \
-                -name 'RTSP Viewer.exe' \
-                ! -path '*/deps/*' \
-                ! -path '*/bundle/*' \
-                -print 2>/dev/null | sort | head -n 1)"
-              if [ -z "${windows_release_bin}" ] || [ ! -f "${windows_release_bin}" ]; then
-                echo "Windows MSVC cross-build did not produce the expected non-bundled RTSP Viewer.exe." >&2
+              windows_release_bin="target/x86_64-pc-windows-msvc/release/RTSP Viewer.exe"
+              if [ ! -f "${windows_release_bin}" ]; then
+                echo "Windows MSVC cross-build did not produce ${windows_release_bin}." >&2
                 echo "All generated Windows executables:" >&2
-                find target src-tauri/target -type f -name '*.exe' -print 2>/dev/null | sort >&2
+                find "${windows_artifact_roots[@]}" -type f -name '*.exe' -print | sort >&2
                 exit 1
               fi
               echo "Selected executable: ${windows_release_bin}"
 
               echo "Searching for WebView2Loader.dll"
-              find target src-tauri/target -type f -name 'WebView2Loader.dll' -print 2>/dev/null | sort
-              windows_webview2_loader="$(find target src-tauri/target \
+              find "${windows_artifact_roots[@]}" -type f -name 'WebView2Loader.dll' -print | sort
+              windows_webview2_loader="$(find "${windows_artifact_roots[@]}" \
                 -type f \
                 -name 'WebView2Loader.dll' \
-                -print 2>/dev/null | sort | head -n 1)"
-              if [ ! -f "${windows_webview2_loader}" ]; then
+                -print | sort | sed -n '1p')"
+              if [ -z "${windows_webview2_loader}" ] || [ ! -f "${windows_webview2_loader}" ]; then
                 echo "Windows MSVC cross-build did not produce WebView2Loader.dll." >&2
                 exit 1
               fi
               echo "Selected WebView2 loader: ${windows_webview2_loader}"
 
               echo "Searching for NSIS installers"
-              find target src-tauri/target -type f -path '*/bundle/nsis/*.exe' -print 2>/dev/null | sort
-              windows_installer="$(find target src-tauri/target -type f -path '*/bundle/nsis/*.exe' 2>/dev/null | head -n 1)"
+              find "${windows_artifact_roots[@]}" -type f -path '*/bundle/nsis/*.exe' -print | sort
+              windows_installer="$(find "${windows_artifact_roots[@]}" -type f -path '*/bundle/nsis/*.exe' -print | sort | sed -n '1p')"
               if [ -z "${windows_installer}" ] || [ ! -f "${windows_installer}" ]; then
                 echo "Windows NSIS cross-build did not produce an installer executable." >&2
                 exit 1
