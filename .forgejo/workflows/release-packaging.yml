@@ -267,20 +267,22 @@ jobs:
               cargo fetch --locked --manifest-path src-tauri/Cargo.toml
               cargo tauri build --ci --bundles nsis --runner cargo-xwin --target x86_64-pc-windows-msvc
 
-              windows_release_bin=""
-              for candidate in \
-                "target/x86_64-pc-windows-msvc/release/rtsp_viewer_tauri.exe" \
-                "src-tauri/target/x86_64-pc-windows-msvc/release/rtsp_viewer_tauri.exe" \
-                "target/release/rtsp_viewer_tauri.exe" \
-                "src-tauri/target/release/rtsp_viewer_tauri.exe"
-              do
-                if [ -f "${candidate}" ]; then
-                  windows_release_bin="${candidate}"
-                  break
-                fi
-              done
-              if [ ! -f "${windows_release_bin}" ]; then
-                echo "Windows MSVC cross-build did not produce rtsp_viewer_tauri.exe in an expected release directory." >&2
+              echo "Windows executable candidates:"
+              find target src-tauri/target \
+                -type f \
+                -name '*.exe' \
+                ! -path '*/bundle/*' \
+                -print 2>/dev/null | sort
+
+              windows_release_bin="$(find target src-tauri/target \
+                -type f \
+                -name '*.exe' \
+                ! -path '*/bundle/*' \
+                -print 2>/dev/null | sort | head -n 1)"
+              if [ -z "${windows_release_bin}" ] || [ ! -f "${windows_release_bin}" ]; then
+                echo "Windows MSVC cross-build did not produce a non-bundled release executable." >&2
+                echo "All generated Windows executables:" >&2
+                find target src-tauri/target -type f -name '*.exe' -print 2>/dev/null | sort >&2
                 exit 1
               fi
 
