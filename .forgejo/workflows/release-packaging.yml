@@ -346,12 +346,17 @@ jobs:
               echo "=== Docker debug ==="
               id
               whoami
-              if [ -S /var/run/docker.sock ]; then
-                ls -l /var/run/docker.sock
-              else
-                echo "/var/run/docker.sock is not a Unix socket"
-                ls -l /var/run || true
-              fi
+              echo "=== Docker socket debug ==="
+              readlink -f /var/run/docker.sock || true
+              ls -l /var/run/docker.sock || true
+              ls -l /run/docker.sock || true
+              stat /var/run/docker.sock || true
+              stat /run/docker.sock || true
+              file /var/run/docker.sock || true
+              file /run/docker.sock || true
+              mount | grep docker || true
+              docker context ls || true
+              env | grep DOCKER || true
               docker version || true
               docker ps || true
               ./build-helpers/linux/build-package.sh x86_64 appimage
