@@ -271,32 +271,44 @@ jobs:
               find target src-tauri/target \
                 -type f \
                 -name '*.exe' \
+                ! -path '*/deps/*' \
                 ! -path '*/bundle/*' \
                 -print 2>/dev/null | sort
 
               windows_release_bin="$(find target src-tauri/target \
                 -type f \
-                -name '*.exe' \
+                -name 'RTSP Viewer.exe' \
+                ! -path '*/deps/*' \
                 ! -path '*/bundle/*' \
                 -print 2>/dev/null | sort | head -n 1)"
               if [ -z "${windows_release_bin}" ] || [ ! -f "${windows_release_bin}" ]; then
-                echo "Windows MSVC cross-build did not produce a non-bundled release executable." >&2
+                echo "Windows MSVC cross-build did not produce the expected non-bundled RTSP Viewer.exe." >&2
                 echo "All generated Windows executables:" >&2
                 find target src-tauri/target -type f -name '*.exe' -print 2>/dev/null | sort >&2
                 exit 1
               fi
+              echo "Selected executable: ${windows_release_bin}"
 
-              windows_webview2_loader="$(dirname "${windows_release_bin}")/WebView2Loader.dll"
+              echo "Searching for WebView2Loader.dll"
+              find target src-tauri/target -type f -name 'WebView2Loader.dll' -print 2>/dev/null | sort
+              windows_webview2_loader="$(find target src-tauri/target \
+                -type f \
+                -name 'WebView2Loader.dll' \
+                -print 2>/dev/null | sort | head -n 1)"
               if [ ! -f "${windows_webview2_loader}" ]; then
-                echo "Windows MSVC cross-build did not produce ${windows_webview2_loader}." >&2
+                echo "Windows MSVC cross-build did not produce WebView2Loader.dll." >&2
                 exit 1
               fi
+              echo "Selected WebView2 loader: ${windows_webview2_loader}"
 
+              echo "Searching for NSIS installers"
+              find target src-tauri/target -type f -path '*/bundle/nsis/*.exe' -print 2>/dev/null | sort
               windows_installer="$(find target src-tauri/target -type f -path '*/bundle/nsis/*.exe' 2>/dev/null | head -n 1)"
               if [ -z "${windows_installer}" ] || [ ! -f "${windows_installer}" ]; then
                 echo "Windows NSIS cross-build did not produce an installer executable." >&2
                 exit 1
               fi
+              echo "Selected NSIS installer: ${windows_installer}"
 
               version="$(cargo pkgid -p rtsp_viewer_tauri | sed 's/.*@//')"
               mkdir -p dist/releases
