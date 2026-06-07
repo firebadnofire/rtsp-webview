@@ -265,7 +265,12 @@ jobs:
 
               export XWIN_CACHE_DIR="${XWIN_CACHE_DIR:-${HOME}/.cache/xwin}"
               cargo fetch --locked --manifest-path src-tauri/Cargo.toml
-              cargo tauri build --ci --bundles nsis --runner cargo-xwin --target x86_64-pc-windows-msvc
+              cargo tauri build \
+                --ci \
+                --bundles nsis \
+                --config src-tauri/tauri.windows.conf.json \
+                --runner cargo-xwin \
+                --target x86_64-pc-windows-msvc
 
               windows_artifact_roots=()
               for artifact_root in target src-tauri/target; do
@@ -299,13 +304,24 @@ jobs:
               find "${windows_artifact_roots[@]}" -type f -name 'WebView2Loader.dll' -print | sort
               windows_webview2_loader="$(find "${windows_artifact_roots[@]}" \
                 -type f \
-                -name 'WebView2Loader.dll' \
+                -path '*/out/x64/WebView2Loader.dll' \
                 -print | sort | sed -n '1p')"
+              if [ -z "${windows_webview2_loader}" ]; then
+                windows_webview2_loader="$(find "${windows_artifact_roots[@]}" \
+                  -type f \
+                  -name 'WebView2Loader.dll' \
+                  -print | sort | sed -n '1p')"
+              fi
               if [ -z "${windows_webview2_loader}" ] || [ ! -f "${windows_webview2_loader}" ]; then
                 echo "Windows MSVC cross-build did not produce WebView2Loader.dll." >&2
                 exit 1
               fi
               echo "Selected WebView2 loader: ${windows_webview2_loader}"
+
+              echo "Bundle directories:"
+              find "${windows_artifact_roots[@]}" -type d -path '*/bundle/*' -print | sort
+              echo "Bundle files:"
+              find "${windows_artifact_roots[@]}" -type f -path '*/bundle/*' -print | sort
 
               echo "Searching for NSIS installers"
               find "${windows_artifact_roots[@]}" -type f -path '*/bundle/nsis/*.exe' -print | sort
