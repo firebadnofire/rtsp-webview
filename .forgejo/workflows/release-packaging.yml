@@ -343,6 +343,17 @@ jobs:
               tar -C dist/linux -czf "dist/linux/$(basename "${package_root}").tar.gz" "$(basename "${package_root}")"
 
               rm -rf dist/linux/packages/appimage
+              echo "=== Docker debug ==="
+              id
+              whoami
+              if [ -S /var/run/docker.sock ]; then
+                ls -l /var/run/docker.sock
+              else
+                echo "/var/run/docker.sock is not a Unix socket"
+                ls -l /var/run || true
+              fi
+              docker version || true
+              docker ps || true
               ./build-helpers/linux/build-package.sh x86_64 appimage
 
               linux_appimage="$(find dist/linux/packages/appimage -maxdepth 1 -type f -name '*.AppImage' | head -n 1)"
