@@ -74,10 +74,10 @@ jobs:
               rm -f dist/releases/rtsp-viewer-macos-app.zip
               ditto -c -k --sequesterRsrc --keepParent "dist/macos/RTSP Viewer.app" "dist/releases/rtsp-viewer-macos-app.zip"
             artifact_paths: dist/releases/rtsp-viewer-macos-app.zip
-          - name: Linux
+          - name: Windows
             runs_on: ubuntu-22.04
             build_shell: bash
-            required_tools: base64 cargo curl docker git jq rustup tar zip
+            required_tools: base64 cargo cargo-tauri cargo-xwin curl git jq makensis node npm rustup zip clang-cl llvm-rc lld-link
             prepare_checkout_command: |
               set -euo pipefail
               missing_tools=""
@@ -139,8 +139,7 @@ jobs:
                 return 1
               }
 
-              # Tauri 1.x / wry 0.24 resolves through webkit2gtk 0.18 + soup2-sys,
-              # which expects the Ubuntu 22.04 WebKitGTK 4.0 development package.
+              # Install the host-side toolchain required for the Windows cross-build.
               $apt_get update
               $apt_get install -y --no-install-recommends \
                 build-essential \
@@ -148,21 +147,12 @@ jobs:
                 clang \
                 coreutils \
                 curl \
-                docker.io \
-                file \
                 git \
                 gnupg \
                 jq \
                 lld \
-                libayatana-appindicator3-dev \
-                libgtk-3-dev \
-                libssl-dev \
-                libwebkit2gtk-4.0-dev \
                 llvm \
                 nsis \
-                librsvg2-dev \
-                pkg-config \
-                tar \
                 zip
 
               needs_node=1
@@ -218,10 +208,6 @@ jobs:
                 echo "Missing cargo-xwin after installation." >&2
                 exit 1
               fi
-              if ! command -v docker >/dev/null 2>&1; then
-                echo "Missing Docker CLI after installation: docker" >&2
-                exit 1
-              fi
               if ! command -v makensis >/dev/null 2>&1; then
                 echo "Missing NSIS compiler after installation: makensis" >&2
                 exit 1
@@ -245,23 +231,6 @@ jobs:
 
               npm --prefix ui ci
               npm --prefix ui run build
-
-              cargo fetch --locked --manifest-path src-tauri/Cargo.toml
-              wry_src="$(find "${CARGO_HOME:-${HOME}/.cargo}/registry/src" -maxdepth 3 -type d -name 'wry-*' | head -n 1)"
-              if [ -n "${wry_src}" ]; then
-                wry_webkitgtk_mod="${wry_src}/src/webview/webkitgtk/mod.rs"
-                if [ -f "${wry_webkitgtk_mod}" ] && ! grep -q 'SettingsExt' "${wry_webkitgtk_mod}"; then
-                  sed -i 's/PolicyDecisionType, /PolicyDecisionType, SettingsExt, /' "${wry_webkitgtk_mod}"
-                fi
-              fi
-
-              cargo build --locked --release -p rtsp_viewer_tauri
-
-              linux_release_bin="target/release/rtsp_viewer_tauri"
-              if [ ! -f "${linux_release_bin}" ]; then
-                echo "Linux release build did not produce ${linux_release_bin}." >&2
-                exit 1
-              fi
 
               export XWIN_CACHE_DIR="${XWIN_CACHE_DIR:-${HOME}/.cache/xwin}"
               cargo fetch --locked --manifest-path src-tauri/Cargo.toml
@@ -332,6 +301,141 @@ jobs:
               fi
               echo "Selected NSIS installer: ${windows_installer}"
 
+              mkdir -p dist/releases
+              windows_output_dir="dist/windows/amd64"
+              rm -rf "${windows_output_dir}"
+              mkdir -p "${windows_output_dir}"
+              install -m 0755 "${windows_release_bin}" "${windows_output_dir}/rtsp-viewer.exe"
+              install -m 0644 "${windows_webview2_loader}" "${windows_output_dir}/WebView2Loader.dll"
+              rm -f dist/releases/rtsp-viewer-windows-amd64-portable.zip
+              zip -j dist/releases/rtsp-viewer-windows-amd64-portable.zip \
+                "${windows_output_dir}/rtsp-viewer.exe" \
+                "${windows_output_dir}/WebView2Loader.dll"
+              install -m 0755 "${windows_installer}" dist/releases/rtsp-viewer-windows-amd64-installer.exe
+            artifact_paths: dist/releases/rtsp-viewer-windows-amd64-portable.zip dist/releases/rtsp-viewer-windows-amd64-installer.exe
+          - name: Linux AppImage
+            runs_on: ubuntu-22.04
+            build_shell: bash
+            required_tools: base64 cargo curl docker file git jq node npm rustup tar zip
+            prepare_checkout_command: |
+              set -euo pipefail
+              missing_tools=""
+              for tool in base64 curl git jq; do
+                if ! command -v "$tool" >/dev/null 2>&1; then
+                  missing_tools="${missing_tools} ${tool}"
+                fi
+              done
+              if [ -n "$missing_tools" ]; then
+                apt_get="apt-get"
+                if command -v sudo >/dev/null 2>&1; then
+                  apt_get="sudo apt-get"
+                fi
+                $apt_get update
+                $apt_get install -y --no-install-recommends ca-certificates coreutils curl git jq
+              fi
+              for tool in base64 curl git jq; do
+                if ! command -v "$tool" >/dev/null 2>&1; then
+                  echo "Missing required checkout tool after bootstrap: ${tool}" >&2
+                  exit 1
+                fi
+              done
+            setup_command: |
+              set -euo pipefail
+              apt_get="apt-get"
+              tee_cmd="tee"
+              install_cmd="install"
+              chmod_cmd="chmod"
+              if command -v sudo >/dev/null 2>&1; then
+                apt_get="sudo apt-get"
+                tee_cmd="sudo tee"
+                install_cmd="sudo install"
+                chmod_cmd="sudo chmod"
+              fi
+
+              export PATH="${HOME}/.cargo/bin:${PATH}"
+
+              # Tauri 1.x / wry 0.24 resolves through webkit2gtk 0.18 + soup2-sys,
+              # which expects the Ubuntu 22.04 WebKitGTK 4.0 development package.
+              $apt_get update
+              $apt_get install -y --no-install-recommends \
+                build-essential \
+                ca-certificates \
+                clang \
+                coreutils \
+                curl \
+                docker.io \
+                file \
+                git \
+                gnupg \
+                jq \
+                libayatana-appindicator3-dev \
+                libgtk-3-dev \
+                libssl-dev \
+                libwebkit2gtk-4.0-dev \
+                librsvg2-dev \
+                pkg-config \
+                tar \
+                zip
+
+              needs_node=1
+              if command -v node >/dev/null 2>&1; then
+                node_major="$(node -p 'process.versions.node.split(".")[0]')"
+                if [ "$node_major" -eq 24 ]; then
+                  needs_node=0
+                fi
+              fi
+              if [ "$needs_node" -eq 1 ]; then
+                $install_cmd -d -m 0755 /etc/apt/keyrings
+                curl --proto '=https' --tlsv1.2 -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+                  | gpg --dearmor \
+                  | $tee_cmd /etc/apt/keyrings/nodesource.gpg >/dev/null
+                $chmod_cmd a+r /etc/apt/keyrings/nodesource.gpg
+                echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main' \
+                  | $tee_cmd /etc/apt/sources.list.d/nodesource.list >/dev/null
+                $apt_get update
+                $apt_get install -y --no-install-recommends nodejs
+              fi
+
+              if ! command -v cargo >/dev/null 2>&1 || ! command -v rustup >/dev/null 2>&1; then
+                curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+                  | sh -s -- -y --profile minimal --default-toolchain stable
+                echo "${HOME}/.cargo/bin" >> "${GITHUB_PATH:-/tmp/github_path}"
+                export PATH="${HOME}/.cargo/bin:${PATH}"
+              fi
+              rustup default stable
+              if ! command -v docker >/dev/null 2>&1; then
+                echo "Missing Docker CLI after installation: docker" >&2
+                exit 1
+              fi
+              node_major="$(node -p 'process.versions.node.split(".")[0]')"
+              if [ "$node_major" -ne 24 ]; then
+                echo "Node.js 24 LTS is required for release builds; found Node.js $(node --version)." >&2
+                exit 1
+              fi
+            build_command: |
+              set -euo pipefail
+              export PATH="${HOME}/.cargo/bin:${PATH}"
+
+              npm --prefix ui ci
+              npm --prefix ui run build
+
+              cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+              wry_src="$(find "${CARGO_HOME:-${HOME}/.cargo}/registry/src" -maxdepth 3 -type d -name 'wry-*' | head -n 1)"
+              if [ -n "${wry_src}" ]; then
+                wry_webkitgtk_mod="${wry_src}/src/webview/webkitgtk/mod.rs"
+                if [ -f "${wry_webkitgtk_mod}" ] && ! grep -q 'SettingsExt' "${wry_webkitgtk_mod}"; then
+                  sed -i 's/PolicyDecisionType, /PolicyDecisionType, SettingsExt, /' "${wry_webkitgtk_mod}"
+                fi
+              fi
+
+              cargo build --locked --release -p rtsp_viewer_tauri
+
+              linux_release_bin="target/release/rtsp_viewer_tauri"
+              if [ ! -f "${linux_release_bin}" ]; then
+                echo "Linux release build did not produce ${linux_release_bin}." >&2
+                exit 1
+              fi
+
               version="$(cargo pkgid -p rtsp_viewer_tauri | sed 's/.*@//')"
               mkdir -p dist/releases
               package_root="dist/linux/rtsp-viewer-${version}-linux-x86_64"
@@ -368,17 +472,7 @@ jobs:
               fi
 
               install -m 0755 "${linux_appimage}" dist/releases/rtsp-viewer-linux-x86_64.AppImage
-              windows_output_dir="dist/windows/amd64"
-              rm -rf "${windows_output_dir}"
-              mkdir -p "${windows_output_dir}"
-              install -m 0755 "${windows_release_bin}" "${windows_output_dir}/rtsp-viewer.exe"
-              install -m 0644 "${windows_webview2_loader}" "${windows_output_dir}/WebView2Loader.dll"
-              rm -f dist/releases/rtsp-viewer-windows-amd64-portable.zip
-              zip -j dist/releases/rtsp-viewer-windows-amd64-portable.zip \
-                "${windows_output_dir}/rtsp-viewer.exe" \
-                "${windows_output_dir}/WebView2Loader.dll"
-              install -m 0755 "${windows_installer}" dist/releases/rtsp-viewer-windows-amd64-installer.exe
-            artifact_paths: dist/releases/rtsp-viewer-linux-x86_64.AppImage dist/releases/rtsp-viewer-windows-amd64-portable.zip dist/releases/rtsp-viewer-windows-amd64-installer.exe
+            artifact_paths: dist/releases/rtsp-viewer-linux-x86_64.AppImage
 
     steps:
       - name: Prepare checkout runtime
