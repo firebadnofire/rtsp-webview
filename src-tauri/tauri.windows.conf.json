@@ -1,17 +1,15 @@
 {
-  "tauri": {
-    "bundle": {
-      "active": true,
-      "targets": [
-        "nsis"
-      ],
-      "windows": {
-        "webviewInstallMode": {
-          "type": "downloadBootstrapper"
-        },
-        "nsis": {
-          "displayLanguageSelector": false
-        }
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "displayLanguageSelector": false
       }
     }
   }

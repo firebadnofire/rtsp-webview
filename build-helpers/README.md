@@ -315,7 +315,7 @@ You can also skip one or both prompts and pass text tokens directly, with archit
 
 This repository does not currently ship an Alpine/musl build helper.
 
-The current desktop stack is Tauri 1 / WRY 0.24 / `webkit2gtk` 0.18, and that dependency chain expects the `webkit2gtk-4.0` system package. Alpine currently exposes `webkit2gtk-4.1` instead, so a reliable musl build path would require a dependency-stack upgrade rather than just another packaging script.
+The current desktop stack is Tauri 2 / WRY 0.55 / `webkit2gtk` 2.x, which targets the system WebKitGTK 4.1 / libsoup3 stack on Linux.
 
 ## Unix-Style Clean
 

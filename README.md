@@ -401,3 +401,7 @@ These helpers remove local build artifacts such as:
 ## Helper Script Reference
 
 For a focused guide to the helper scripts, see [build-helpers/README.md](build-helpers/README.md).
+
+## Additional notes
+
+- This project uses an AI generated icon. This is the only AI generated visual asset. If this concerns you, please open an issue to submit icon artwork to replace it.

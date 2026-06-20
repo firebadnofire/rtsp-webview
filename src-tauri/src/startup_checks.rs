@@ -2,7 +2,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::utils::assets::AssetKey;
-use tauri::utils::config::{AppUrl, WindowUrl};
+use tauri::utils::config::FrontendDist;
 use tauri::{Assets, Context};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(800);
@@ -110,18 +110,17 @@ fn verify_asset_directory(path: &Path) -> Result<(), String> {
     verify_asset_file(&index_path)
 }
 
-pub fn preflight_app_url(base_dir: &Path, app_url: &AppUrl) -> Result<(), String> {
-    match app_url {
-        AppUrl::Url(WindowUrl::External(url)) => verify_external_url(url),
-        AppUrl::Url(WindowUrl::App(path)) => {
+pub fn preflight_frontend_dist(
+    base_dir: &Path,
+    frontend_dist: &FrontendDist,
+) -> Result<(), String> {
+    match frontend_dist {
+        FrontendDist::Url(url) => verify_external_url(url),
+        FrontendDist::Directory(path) => {
             let resolved = resolve_path(base_dir, path);
-            if resolved.is_dir() {
-                verify_asset_directory(&resolved)
-            } else {
-                verify_asset_file(&resolved)
-            }
+            verify_asset_directory(&resolved)
         }
-        AppUrl::Files(files) => {
+        FrontendDist::Files(files) => {
             if files.is_empty() {
                 return Err("frontend files list is empty".to_string());
             }
@@ -148,9 +147,16 @@ pub fn preflight_app_url(base_dir: &Path, app_url: &AppUrl) -> Result<(), String
 }
 
 pub fn preflight_frontend<A: Assets>(context: &Context<A>) -> Result<(), String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
     if cfg!(debug_assertions) {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        return preflight_app_url(&manifest_dir, &context.config().build.dev_path);
+        if let Some(dev_url) = &context.config().build.dev_url {
+            verify_external_url(dev_url)?;
+        }
+        if let Some(frontend_dist) = &context.config().build.frontend_dist {
+            preflight_frontend_dist(&manifest_dir, frontend_dist)?;
+        }
+        return Ok(());
     }
 
     let index_key = AssetKey::from("index.html");
@@ -169,7 +175,8 @@ mod tests {
     #[test]
     fn fails_when_bundle_directory_is_empty() {
         let temp = tempfile::tempdir().expect("tempdir should create");
-        let result = preflight_app_url(temp.path(), &AppUrl::Url(WindowUrl::App("bundle".into())));
+        let result =
+            preflight_frontend_dist(temp.path(), &FrontendDist::Directory("bundle".into()));
         assert!(result.is_err());
     }
 
@@ -180,7 +187,8 @@ mod tests {
         std::fs::create_dir_all(&bundle).expect("bundle directory should create");
         std::fs::write(bundle.join("app.js"), b"console.log('ok');").expect("app.js should write");
 
-        let result = preflight_app_url(temp.path(), &AppUrl::Url(WindowUrl::App("bundle".into())));
+        let result =
+            preflight_frontend_dist(temp.path(), &FrontendDist::Directory("bundle".into()));
         assert!(result.is_err());
     }
 
@@ -191,9 +199,9 @@ mod tests {
         drop(listener);
 
         let url = tauri::Url::parse(&format!("http://127.0.0.1:{port}")).expect("url should parse");
-        let result = preflight_app_url(
+        let result = preflight_frontend_dist(
             tempfile::tempdir().expect("tempdir").path(),
-            &AppUrl::Url(WindowUrl::External(url)),
+            &FrontendDist::Url(url),
         );
         assert!(result.is_err());
     }

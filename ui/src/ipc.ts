@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 import type { AutoPopulateTool, GetStateResponse, PanelConfigPatch, StreamDefaultsPatch } from './types'
 
 export interface IpcClient {

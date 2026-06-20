@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24-bullseye AS toolchain
+FROM node:24-bookworm AS toolchain
 
 ARG APT_HTTP_PROXY=""
 
@@ -23,7 +23,7 @@ RUN set -eux; \
     libayatana-appindicator3-dev \
     libgtk-3-dev \
     libssl-dev \
-    libwebkit2gtk-4.0-dev \
+    libwebkit2gtk-4.1-dev \
     librsvg2-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
@@ -68,13 +68,7 @@ RUN set -eux; \
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git/db,sharing=locked \
     set -eux; \
-    cargo fetch --locked --manifest-path /work/src-tauri/Cargo.toml; \
-    wry_src="$(find /usr/local/cargo/registry/src -maxdepth 2 -type d -name 'wry-*' | head -n 1)"; \
-    test -n "${wry_src}"; \
-    wry_webkitgtk_mod="${wry_src}/src/webview/webkitgtk/mod.rs"; \
-    if ! grep -q 'SettingsExt' "${wry_webkitgtk_mod}"; then \
-        sed -i 's/PolicyDecisionType, /PolicyDecisionType, SettingsExt, /' "${wry_webkitgtk_mod}"; \
-    fi
+    cargo fetch --locked --manifest-path /work/src-tauri/Cargo.toml
 
 COPY . /work
 

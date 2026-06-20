@@ -268,7 +268,7 @@ case "${PACKAGE_TARGET}" in
             "${APP_NAME}_${version}_${deb_arch}.deb" \
             --depends ffmpeg \
             --depends libgtk-3-0 \
-            --depends libwebkit2gtk-4.0-37 \
+            --depends libwebkit2gtk-4.1-0 \
             --depends libayatana-appindicator3-1
         ;;
     rpm-rhel)
@@ -281,7 +281,7 @@ case "${PACKAGE_TARGET}" in
             --rpm-dist el9 \
             --depends ffmpeg \
             --depends gtk3 \
-            --depends webkit2gtk3 \
+            --depends webkit2gtk4.1 \
             --depends libappindicator-gtk3
         ;;
     rpm-zypper)
@@ -294,7 +294,7 @@ case "${PACKAGE_TARGET}" in
             --rpm-dist opensuse \
             --depends ffmpeg \
             --depends gtk3 \
-            --depends webkit2gtk3-soup2 \
+            --depends webkit2gtk4 \
             --depends libappindicator3-1
         ;;
     arch)
@@ -306,7 +306,7 @@ case "${PACKAGE_TARGET}" in
             --pacman-compression zstd \
             --depends ffmpeg \
             --depends gtk3 \
-            --depends webkit2gtk \
+            --depends webkit2gtk-4.1 \
             --depends libappindicator-gtk3
         ;;
     appimage)

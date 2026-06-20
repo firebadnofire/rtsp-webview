@@ -19,30 +19,49 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, collections::HashSet};
-use tauri::api::dialog::blocking::FileDialogBuilder;
 use tauri::{AppHandle, State};
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use url::Url;
 
 const DEFAULT_CONFIG_FILE_NAME: &str = "rtsp_viewer_config.json";
 
-fn resolve_save_path(path: Option<String>, default_name: &str) -> Result<PathBuf, CommandError> {
+fn resolve_dialog_path(path: FilePath) -> Result<PathBuf, CommandError> {
+    match path {
+        FilePath::Path(path) => Ok(path),
+        FilePath::Url(url) => url
+            .to_file_path()
+            .map_err(|_| CommandError::io(format!("dialog returned a non-filesystem URL: {url}"))),
+    }
+}
+
+fn resolve_save_path(
+    app: &AppHandle,
+    path: Option<String>,
+    default_name: &str,
+) -> Result<PathBuf, CommandError> {
     if let Some(path) = path {
         return Ok(PathBuf::from(path));
     }
 
-    FileDialogBuilder::new()
+    app.dialog()
+        .file()
         .set_file_name(default_name)
-        .save_file()
+        .blocking_save_file()
+        .map(resolve_dialog_path)
+        .transpose()?
         .ok_or_else(|| CommandError::io("save was canceled"))
 }
 
-fn resolve_open_path(path: Option<String>) -> Result<PathBuf, CommandError> {
+fn resolve_open_path(app: &AppHandle, path: Option<String>) -> Result<PathBuf, CommandError> {
     if let Some(path) = path {
         return Ok(PathBuf::from(path));
     }
 
-    FileDialogBuilder::new()
-        .pick_file()
+    app.dialog()
+        .file()
+        .blocking_pick_file()
+        .map(resolve_dialog_path)
+        .transpose()?
         .ok_or_else(|| CommandError::io("open was canceled"))
 }
 
@@ -1006,10 +1025,11 @@ pub async fn stop_all_global(
 
 #[tauri::command]
 pub async fn save_config(
+    app: AppHandle,
     state: State<'_, ManagedState>,
     path: Option<String>,
 ) -> Result<String, CommandError> {
-    let selected_path = resolve_save_path(path, DEFAULT_CONFIG_FILE_NAME)?;
+    let selected_path = resolve_save_path(&app, path, DEFAULT_CONFIG_FILE_NAME)?;
     let config = {
         let runtime = state.inner.runtime.read().await;
         let mut config = runtime.to_app_config();
@@ -1028,7 +1048,7 @@ pub async fn load_config(
     state: State<'_, ManagedState>,
     path: Option<String>,
 ) -> Result<String, CommandError> {
-    let selected_path = resolve_open_path(path)?;
+    let selected_path = resolve_open_path(&app, path)?;
     load_config_from_path(&app, state.inner().clone(), selected_path).await
 }
 
@@ -1063,7 +1083,7 @@ pub async fn snapshot(
         panel_id,
         Local::now().format("%Y%m%d_%H%M%S")
     );
-    let selected_path = resolve_save_path(path, &default_name)?;
+    let selected_path = resolve_save_path(&app, path, &default_name)?;
 
     let frame = {
         let runtime = state.inner.runtime.read().await;
@@ -1109,6 +1129,7 @@ pub async fn snapshot(
 
 #[tauri::command]
 pub async fn toggle_recording(
+    app: AppHandle,
     state: State<'_, ManagedState>,
     screen_id: u32,
     panel_id: u8,
@@ -1135,7 +1156,7 @@ pub async fn toggle_recording(
         panel_id,
         Local::now().format("%Y%m%d_%H%M%S")
     );
-    let selected_path = resolve_save_path(path, &default_name)?;
+    let selected_path = resolve_save_path(&app, path, &default_name)?;
     let placeholder = b"stub recording output";
     tokio::fs::write(&selected_path, placeholder).await?;
 
