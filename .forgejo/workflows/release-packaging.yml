@@ -116,6 +116,7 @@ jobs:
 
               mkdir -p "${tool_shim_dir}"
               export PATH="${tool_shim_dir}:${HOME}/.cargo/bin:${PATH}"
+              echo "${tool_shim_dir}" >> "${GITHUB_PATH:-/tmp/github_path}"
 
               link_versioned_tool() {
                 tool_name="$1"
@@ -598,7 +599,7 @@ jobs:
             exit 1
           fi
 
-          for path_entry in "${HOME}/.cargo/bin" /opt/homebrew/bin /usr/local/bin; do
+          for path_entry in "${HOME}/.local/bin" "${HOME}/.cargo/bin" /opt/homebrew/bin /usr/local/bin; do
             if [ -d "$path_entry" ]; then
               export PATH="${path_entry}:${PATH}"
             fi
