@@ -46,6 +46,8 @@ Originally this started as a quick proof of concept in Python, but it didn’t s
 
 See [build-helpers](https://pubcode.archuser.org/firebadnofire/rtsp-webview/src/branch/main/build-helpers#windows-helpers) for more info on how to build this software yourself using the automated scripts.
 
+Note for MacOS users, I do not pay for an Apple developer license. You will need to remove the quarantine xattrs, details in the release page.
+
 ## Release Artifacts
 
 Tagged CI builds publish these packaged release artifacts:

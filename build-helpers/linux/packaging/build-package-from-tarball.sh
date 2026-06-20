@@ -5,9 +5,14 @@ set -euo pipefail
 : "${PACKAGE_TARGET:?PACKAGE_TARGET must be set}"
 : "${TARBALL_BASENAME:?TARBALL_BASENAME must be set}"
 
-INPUT_TARBALL="/input/dist/linux/${TARBALL_BASENAME}"
-ICON_PATH="/input/icon.png"
-OUT_DIR="/out"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+
+INPUT_BASE_DIR="${INPUT_BASE_DIR:-${ROOT_DIR}/dist/linux}"
+ICON_PATH="${ICON_PATH:-${ROOT_DIR}/src-tauri/icons/icon.png}"
+OUT_DIR="${OUT_DIR:-${ROOT_DIR}/dist/linux/packages/${PACKAGE_TARGET}}"
+APPIMAGETOOL_RELEASE="${APPIMAGETOOL_RELEASE:-continuous}"
+INPUT_TARBALL="${INPUT_BASE_DIR}/${TARBALL_BASENAME}"
 APP_NAME="rtsp-viewer"
 APP_TITLE="RTSP Viewer"
 APP_BINARY="rtsp_viewer_tauri"
@@ -181,6 +186,8 @@ build_appimage() {
     local tool_url=""
     local appdir="${workspace}/AppDir"
 
+    command -v mksquashfs >/dev/null 2>&1 || fail "mksquashfs is required to build AppImage packages"
+
     case "$(uname -m)" in
         x86_64|amd64)
             tool_arch="x86_64"
@@ -207,12 +214,13 @@ build_appimage() {
 
     prepare_appdir "${appdir}"
 
-    curl -fsSL "${tool_url}" -o /tmp/appimagetool.AppImage
-    chmod 0755 /tmp/appimagetool.AppImage
+    local tool_path="${workspace}/appimagetool.AppImage"
+    curl -fsSL "${tool_url}" -o "${tool_path}"
+    chmod 0755 "${tool_path}"
 
     mkdir -p "${OUT_DIR}"
 
-    ARCH="${target_arch}" /tmp/appimagetool.AppImage \
+    ARCH="${target_arch}" "${tool_path}" \
         --appimage-extract-and-run \
         "${appdir}" \
         "${OUT_DIR}/RTSP-Viewer-${version}-${target_arch}.AppImage"

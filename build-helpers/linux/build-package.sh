@@ -10,6 +10,7 @@ BUILDER_NAME="${BUILDER_NAME:-rtsp-webview-linux-builder}"
 BUILD_NETWORK_NAME="${BUILD_NETWORK_NAME:-build-system}"
 APT_CACHE_URL="${APT_CACHE_URL:-http://apt-cacher-ng:3142}"
 APT_HTTP_PROXY=""
+HOST_PACKAGER="${ROOT_DIR}/build-helpers/linux/packaging/build-package-from-tarball.sh"
 
 fail() {
     printf 'error: %s\n' "$*" >&2
@@ -122,6 +123,19 @@ is_interactive_terminal() {
 
 ensure_docker_command() {
     command -v docker >/dev/null 2>&1 || fail 'docker is required'
+}
+
+run_host_packager() {
+    local package_target="$1"
+    local tarball_basename="$2"
+    local output_dir="$3"
+
+    INPUT_BASE_DIR="${ARTIFACT_DIR}" \
+    ICON_PATH="${ROOT_DIR}/src-tauri/icons/icon.png" \
+    OUT_DIR="${output_dir}" \
+    PACKAGE_TARGET="${package_target}" \
+    TARBALL_BASENAME="${tarball_basename}" \
+    "${HOST_PACKAGER}"
 }
 
 ensure_build_network() {
@@ -282,6 +296,7 @@ build_selected_package() {
     local output_subdir=""
     local label=""
     local -a docker_targets=()
+    local host_package_target=""
 
     case "${selection}" in
         1|deb)
@@ -300,7 +315,7 @@ build_selected_package() {
             label="Arch package"
             ;;
         4|appimage)
-            docker_targets=("export-appimage")
+            host_package_target="appimage"
             output_subdir="appimage"
             label="AppImage"
             ;;
@@ -325,15 +340,19 @@ build_selected_package() {
     tarball_basename="$(basename "${tarball_path}")"
     output_dir="$(canonicalize_dir "${OUTPUT_BASE_DIR}/${output_subdir}")"
 
-    ensure_builder
-
     printf 'Using tarball: %s\n' "${tarball_path}"
     printf 'Building %s into %s\n' "${label}" "${output_dir}"
 
-    local docker_target=""
-    for docker_target in "${docker_targets[@]}"; do
-        run_docker_build "${docker_target}" "${tarball_basename}" "${output_dir}"
-    done
+    if [[ -n "${host_package_target}" ]]; then
+        run_host_packager "${host_package_target}" "${tarball_basename}" "${output_dir}"
+    else
+        ensure_builder
+
+        local docker_target=""
+        for docker_target in "${docker_targets[@]}"; do
+            run_docker_build "${docker_target}" "${tarball_basename}" "${output_dir}"
+        done
+    fi
 
     printf '%s created in %s\n' "${label}" "${output_dir}"
 }
@@ -341,16 +360,6 @@ build_selected_package() {
 tarball_arch_selection=""
 selection=""
 BUILD_PLATFORM="${BUILD_PLATFORM:-$(default_build_platform)}"
-
-ensure_docker_command
-ensure_build_network
-APT_HTTP_PROXY="$(probe_apt_cache)"
-
-if [[ -n "${APT_HTTP_PROXY}" ]]; then
-    printf 'Using apt proxy %s\n' "${APT_HTTP_PROXY}"
-else
-    printf 'No apt proxy detected at %s\n' "${APT_CACHE_URL}"
-fi
 
 for arg in "$@"; do
     if [[ -z "${tarball_arch_selection}" ]] && is_architecture_token "${arg}"; then
@@ -388,5 +397,19 @@ if [[ -z "${selection}" ]]; then
     fi
 fi
 
-trap cleanup_builder EXIT
+case "${selection}" in
+    1|deb|2|rpm|rpm-rhel|rhel|rpm-zypper|zypper|opensuse|suse|3|arch|pacman)
+        ensure_docker_command
+        ensure_build_network
+        APT_HTTP_PROXY="$(probe_apt_cache)"
+
+        if [[ -n "${APT_HTTP_PROXY}" ]]; then
+            printf 'Using apt proxy %s\n' "${APT_HTTP_PROXY}"
+        else
+            printf 'No apt proxy detected at %s\n' "${APT_CACHE_URL}"
+        fi
+        trap cleanup_builder EXIT
+        ;;
+esac
+
 build_selected_package "${selection}" "${tarball_arch}"

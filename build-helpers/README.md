@@ -269,7 +269,12 @@ The script refuses to run if `dist/linux` does not contain a tarball.
 
 It first presents an interactive numbered architecture menu to choose which tarball to package, then presents the package-format menu for that architecture.
 
-Like the tarball helper, it creates or reuses the external Docker network `build-system`, probes `http://apt-cacher-ng:3142`, and only enables an APT proxy when that cache is reachable. Its temporary `buildx` builder is removed automatically when the script exits.
+Docker is still used for `.deb`, `.rpm`, and Arch packaging. Those formats create or reuse the external Docker network `build-system`, probe `http://apt-cacher-ng:3142`, and only enable an APT proxy when that cache is reachable. Their temporary `buildx` builder is removed automatically when the script exits.
+
+AppImage packaging runs directly on the current build environment instead of Docker. It currently requires:
+
+- `curl`
+- `mksquashfs` from `squashfs-tools`
 
 The package menu can build one of:
 

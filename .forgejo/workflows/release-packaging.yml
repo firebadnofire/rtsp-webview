@@ -317,7 +317,7 @@ jobs:
           - name: Linux AppImage
             runs_on: ubuntu-22.04
             build_shell: bash
-            required_tools: base64 cargo curl docker file git jq node npm rustup tar zip
+            required_tools: base64 cargo curl file git jq mksquashfs node npm rustup tar zip
             prepare_checkout_command: |
               set -euo pipefail
               missing_tools=""
@@ -364,7 +364,6 @@ jobs:
                 clang \
                 coreutils \
                 curl \
-                docker.io \
                 file \
                 git \
                 gnupg \
@@ -374,6 +373,7 @@ jobs:
                 libssl-dev \
                 libwebkit2gtk-4.0-dev \
                 librsvg2-dev \
+                squashfs-tools \
                 pkg-config \
                 tar \
                 zip
@@ -404,10 +404,6 @@ jobs:
                 export PATH="${HOME}/.cargo/bin:${PATH}"
               fi
               rustup default stable
-              if ! command -v docker >/dev/null 2>&1; then
-                echo "Missing Docker CLI after installation: docker" >&2
-                exit 1
-              fi
               node_major="$(node -p 'process.versions.node.split(".")[0]')"
               if [ "$node_major" -ne 24 ]; then
                 echo "Node.js 24 LTS is required for release builds; found Node.js $(node --version)." >&2
@@ -448,22 +444,6 @@ jobs:
               tar -C dist/linux -czf "dist/linux/$(basename "${package_root}").tar.gz" "$(basename "${package_root}")"
 
               rm -rf dist/linux/packages/appimage
-              echo "=== Docker debug ==="
-              id
-              whoami
-              echo "=== Docker socket debug ==="
-              readlink -f /var/run/docker.sock || true
-              ls -l /var/run/docker.sock || true
-              ls -l /run/docker.sock || true
-              stat /var/run/docker.sock || true
-              stat /run/docker.sock || true
-              file /var/run/docker.sock || true
-              file /run/docker.sock || true
-              mount | grep docker || true
-              docker context ls || true
-              env | grep DOCKER || true
-              docker version || true
-              docker ps || true
               ./build-helpers/linux/build-package.sh x86_64 appimage
 
               linux_appimage="$(find dist/linux/packages/appimage -maxdepth 1 -type f -name '*.AppImage' | head -n 1)"
