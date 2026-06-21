@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::utils::assets::AssetKey;
 use tauri::utils::config::FrontendDist;
-use tauri::{Assets, Context};
+use tauri::{Context, Runtime};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(800);
 
@@ -146,7 +146,7 @@ pub fn preflight_frontend_dist(
     }
 }
 
-pub fn preflight_frontend<A: Assets>(context: &Context<A>) -> Result<(), String> {
+pub fn preflight_frontend<R: Runtime>(context: &Context<R>) -> Result<(), String> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     if cfg!(debug_assertions) {
@@ -160,7 +160,7 @@ pub fn preflight_frontend<A: Assets>(context: &Context<A>) -> Result<(), String>
     }
 
     let index_key = AssetKey::from("index.html");
-    if context.assets().get(&index_key).is_none() {
+    if context.assets.get(&index_key).is_none() {
         return Err("embedded frontend asset '/index.html' is missing".to_string());
     }
 

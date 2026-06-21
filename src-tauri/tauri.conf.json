@@ -2,11 +2,11 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "RTSP Viewer",
   "version": "0.1.0",
-  "identifier": "com.rtspviewer.app",
+  "identifier": "com.firebadnofire.rtspviewer",
   "mainBinaryName": "RTSP Viewer",
   "build": {
-    "beforeBuildCommand": "cd ui && npm run build",
-    "beforeDevCommand": "cd ui && npm run dev -- --host 127.0.0.1",
+    "beforeBuildCommand": "npm --prefix ../ui run build",
+    "beforeDevCommand": "npm --prefix ../ui run dev -- --host 127.0.0.1",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../ui/dist"
   },

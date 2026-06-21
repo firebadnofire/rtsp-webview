@@ -84,9 +84,9 @@ require_node_24
 [[ -f "${TAURI_CONFIG}" ]] || fail "missing Tauri config at ${TAURI_CONFIG}"
 [[ -f "${ICON_SOURCE}" ]] || fail "missing icon source at ${ICON_SOURCE}"
 
-product_name="$(read_tauri_field "config.package.productName")"
-bundle_identifier="$(read_tauri_field "config.tauri.bundle.identifier")"
-version="$(read_tauri_field "config.package.version")"
+product_name="$(read_tauri_field "config.productName ?? config.package?.productName")"
+bundle_identifier="$(read_tauri_field "config.identifier ?? config.bundle?.identifier")"
+version="$(read_tauri_field "config.version ?? config.package?.version")"
 bundle_icon_name="rtsp-viewer"
 bundle_icon_plist=""
 
