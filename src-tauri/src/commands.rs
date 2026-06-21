@@ -13,13 +13,12 @@ use rtsp_core::{
     SavedSecret, SnapshotFailedEvent, SnapshotSavedEvent, StreamDefaultsPatch, IPC_VERSION,
     MAX_SCREEN_COUNT, PANELS_PER_SCREEN,
 };
-use rtsp_secrets::SecretPayload;
-use std::ffi::OsString;
+use rtsp_secrets::{SecretPayload, SecretStore};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, collections::HashSet};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use url::Url;
 
@@ -65,107 +64,11 @@ fn resolve_open_path(app: &AppHandle, path: Option<String>) -> Result<PathBuf, C
         .ok_or_else(|| CommandError::io("open was canceled"))
 }
 
-fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
-    if !paths.iter().any(|candidate| candidate == &path) {
-        paths.push(path);
-    }
-}
-
-fn push_config_path(paths: &mut Vec<PathBuf>, directory: &Path) {
-    push_unique_path(paths, directory.join(DEFAULT_CONFIG_FILE_NAME));
-}
-
-fn resolve_home_directory() -> Option<PathBuf> {
-    if let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
-        return Some(PathBuf::from(home));
-    }
-
-    if let Some(user_profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
-        return Some(PathBuf::from(user_profile));
-    }
-
-    let home_drive = std::env::var_os("HOMEDRIVE").filter(|value| !value.is_empty());
-    let home_path = std::env::var_os("HOMEPATH").filter(|value| !value.is_empty());
-    if let (Some(home_drive), Some(home_path)) = (home_drive, home_path) {
-        let mut combined = OsString::from(home_drive);
-        combined.push(home_path);
-        return Some(PathBuf::from(combined));
-    }
-
-    dirs::home_dir()
-}
-
-fn append_home_relative_config_locations(paths: &mut Vec<PathBuf>, home_dir: &Path) {
-    push_config_path(paths, home_dir);
-
-    for directory_name in [
-        "Documents",
-        "Downloads",
-        "Pictures",
-        "Desktop",
-        "Music",
-        "Videos",
-        "Movies",
-    ] {
-        push_config_path(paths, &home_dir.join(directory_name));
-    }
-}
-
-fn append_dirs_config_locations(paths: &mut Vec<PathBuf>) {
-    if let Some(home_dir) = dirs::home_dir() {
-        push_config_path(paths, &home_dir);
-    }
-    if let Some(document_dir) = dirs::document_dir() {
-        push_config_path(paths, &document_dir);
-    }
-    if let Some(download_dir) = dirs::download_dir() {
-        push_config_path(paths, &download_dir);
-    }
-    if let Some(picture_dir) = dirs::picture_dir() {
-        push_config_path(paths, &picture_dir);
-    }
-    if let Some(desktop_dir) = dirs::desktop_dir() {
-        push_config_path(paths, &desktop_dir);
-    }
-    if let Some(audio_dir) = dirs::audio_dir() {
-        push_config_path(paths, &audio_dir);
-    }
-    if let Some(video_dir) = dirs::video_dir() {
-        push_config_path(paths, &video_dir);
-    }
-}
-
-fn append_common_user_config_locations(paths: &mut Vec<PathBuf>) {
-    if let Some(home_dir) = resolve_home_directory() {
-        append_home_relative_config_locations(paths, &home_dir);
-    }
-
-    append_dirs_config_locations(paths);
-}
-
-fn resolve_startup_config_path() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-
-    if let Ok(current_dir) = std::env::current_dir() {
-        push_unique_path(&mut candidates, current_dir.join(DEFAULT_CONFIG_FILE_NAME));
-    }
-
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(parent) = current_exe.parent() {
-            push_unique_path(&mut candidates, parent.join(DEFAULT_CONFIG_FILE_NAME));
-        }
-    }
-
-    append_common_user_config_locations(&mut candidates);
-
-    if cfg!(debug_assertions) {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        if let Some(repo_root) = manifest_dir.parent() {
-            push_unique_path(&mut candidates, repo_root.join(DEFAULT_CONFIG_FILE_NAME));
-        }
-    }
-
-    candidates.into_iter().find(|path| path.is_file())
+fn resolve_startup_config_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
+    let app_config_dir = app.path().app_config_dir().map_err(|error| {
+        CommandError::io(format!("app config directory unavailable: {}", error))
+    })?;
+    Ok(app_config_dir.join(DEFAULT_CONFIG_FILE_NAME))
 }
 
 fn atomic_write(path: &Path, content: &[u8]) -> Result<(), CommandError> {
@@ -198,6 +101,29 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), CommandError> {
     }
 
     Ok(())
+}
+
+fn serialize_runtime_config(
+    runtime: &AppRuntimeState,
+    include_saved_secrets: bool,
+) -> Result<Vec<u8>, CommandError> {
+    let mut config = runtime.to_app_config();
+    if include_saved_secrets {
+        config.saved_secrets = collect_saved_secrets(runtime);
+    }
+    serde_json::to_vec_pretty(&config).map_err(|error| CommandError::io(error.to_string()))
+}
+
+async fn persist_startup_config(
+    app: &AppHandle,
+    managed: ManagedState,
+) -> Result<(), CommandError> {
+    let path = resolve_startup_config_path(app)?;
+    let serialized = {
+        let runtime = managed.inner.runtime.read().await;
+        serialize_runtime_config(&runtime, false)?
+    };
+    atomic_write(&path, &serialized)
 }
 
 fn replace_token(input: &str, token: &str, value: &str) -> String {
@@ -388,6 +314,7 @@ fn collect_existing_secret_keys(runtime: &AppRuntimeState) -> HashSet<String> {
 
 fn resolve_config_secrets(
     config: &AppConfig,
+    secret_store: &dyn SecretStore,
 ) -> Result<HashMap<String, Option<PanelSecret>>, CommandError> {
     let mut map = HashMap::new();
     for (screen_idx, screen) in config.screens.iter().enumerate() {
@@ -403,6 +330,20 @@ fn resolve_config_secrets(
                         Some(PanelSecret {
                             username: saved.username.clone(),
                             password: saved.password.clone(),
+                        }),
+                    );
+                }
+                continue;
+            }
+            if let Some(saved) = secret_store.get(&key)? {
+                if saved.username.trim().is_empty() && saved.password.trim().is_empty() {
+                    map.insert(key, None);
+                } else {
+                    map.insert(
+                        key,
+                        Some(PanelSecret {
+                            username: saved.username,
+                            password: saved.password,
                         }),
                     );
                 }
@@ -604,7 +545,7 @@ async fn load_config_from_path(
     let content = tokio::fs::read_to_string(&selected_path).await?;
     let parsed: AppConfig = serde_json::from_str(&content)
         .map_err(|error| CommandError::config(format!("invalid config json: {}", error)))?;
-    let desired_secrets = resolve_config_secrets(&parsed)?;
+    let desired_secrets = resolve_config_secrets(&parsed, managed.inner.secret_store.as_ref())?;
     let external_secrets = desired_secrets
         .iter()
         .filter_map(|(key, secret)| secret.clone().map(|secret| (key.clone(), secret)))
@@ -644,6 +585,8 @@ async fn load_config_from_path(
         },
     )?;
 
+    persist_startup_config(app, managed.clone()).await?;
+
     Ok(selected_path.to_string_lossy().to_string())
 }
 
@@ -665,6 +608,7 @@ pub async fn set_active_screen(
     }
 
     rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
+    persist_startup_config(&app, state.inner().clone()).await?;
     emit_cached_frames_for_screen(&app, state.inner().clone(), screen_id).await
 }
 
@@ -679,7 +623,8 @@ pub async fn set_active_panel(
         let mut runtime = state.inner.runtime.write().await;
         runtime.set_active_panel(screen_id, panel_id)?;
     }
-    rebalance_active_preview_fps(&app, state.inner().clone(), None).await
+    rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
+    persist_startup_config(&app, state.inner().clone()).await
 }
 
 #[tauri::command]
@@ -703,6 +648,7 @@ pub async fn update_panel_config(
         restart_panel(&app, state.inner().clone(), key).await?;
     }
 
+    persist_startup_config(&app, state.inner().clone()).await?;
     Ok(())
 }
 
@@ -721,6 +667,7 @@ pub async fn update_stream_defaults(
         restart_panel(&app, state.inner().clone(), key).await?;
     }
 
+    persist_startup_config(&app, state.inner().clone()).await?;
     Ok(())
 }
 
@@ -763,6 +710,7 @@ pub async fn set_panel_secret(
         restart_panel(&app, state.inner().clone(), key).await?;
     }
 
+    persist_startup_config(&app, state.inner().clone()).await?;
     Ok(())
 }
 
@@ -862,6 +810,7 @@ pub async fn auto_populate_cameras(
 
     apply_secret_updates(state.inner(), desired_secrets, existing_secret_keys)?;
 
+    persist_startup_config(&app, state.inner().clone()).await?;
     Ok(())
 }
 
@@ -889,7 +838,8 @@ pub async fn start_stream(
             panel_id,
         }),
     )
-    .await
+    .await?;
+    persist_startup_config(&app, state.inner().clone()).await
 }
 
 #[tauri::command]
@@ -909,7 +859,8 @@ pub async fn stop_stream(
         true,
     )
     .await?;
-    rebalance_active_preview_fps(&app, state.inner().clone(), None).await
+    rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
+    persist_startup_config(&app, state.inner().clone()).await
 }
 
 #[tauri::command]
@@ -939,6 +890,7 @@ pub async fn start_screen(
     if let Some(error) = first_error {
         return Err(error);
     }
+    persist_startup_config(&app, state.inner().clone()).await?;
     Ok(())
 }
 
@@ -961,6 +913,7 @@ pub async fn stop_screen(
         .await?;
     }
     rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
+    persist_startup_config(&app, state.inner().clone()).await?;
     Ok(())
 }
 
@@ -996,6 +949,7 @@ pub async fn start_all_global(
     }
 
     rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
+    persist_startup_config(&app, state.inner().clone()).await?;
     Ok(())
 }
 
@@ -1020,6 +974,7 @@ pub async fn stop_all_global(
         }
     }
     rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
+    persist_startup_config(&app, state.inner().clone()).await?;
     Ok(())
 }
 
@@ -1030,14 +985,10 @@ pub async fn save_config(
     path: Option<String>,
 ) -> Result<String, CommandError> {
     let selected_path = resolve_save_path(&app, path, DEFAULT_CONFIG_FILE_NAME)?;
-    let config = {
+    let serialized = {
         let runtime = state.inner.runtime.read().await;
-        let mut config = runtime.to_app_config();
-        config.saved_secrets = collect_saved_secrets(&runtime);
-        config
+        serialize_runtime_config(&runtime, true)?
     };
-    let serialized =
-        serde_json::to_vec_pretty(&config).map_err(|error| CommandError::io(error.to_string()))?;
     atomic_write(&selected_path, &serialized)?;
     Ok(selected_path.to_string_lossy().to_string())
 }
@@ -1057,9 +1008,10 @@ pub async fn load_startup_config(
     app: AppHandle,
     state: State<'_, ManagedState>,
 ) -> Result<Option<String>, CommandError> {
-    let Some(path) = resolve_startup_config_path() else {
+    let path = resolve_startup_config_path(&app)?;
+    if !path.is_file() {
         return Ok(None);
-    };
+    }
 
     let loaded = load_config_from_path(&app, state.inner().clone(), path).await?;
     Ok(Some(loaded))
@@ -1172,6 +1124,7 @@ pub async fn toggle_recording(
 
 #[tauri::command]
 pub async fn toggle_fullscreen(
+    app: AppHandle,
     state: State<'_, ManagedState>,
     enabled: bool,
 ) -> Result<(), CommandError> {
@@ -1180,13 +1133,22 @@ pub async fn toggle_fullscreen(
         return Ok(());
     }
     runtime.fullscreen = enabled;
+    drop(runtime);
+    persist_startup_config(&app, state.inner().clone()).await?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn create_screen(state: State<'_, ManagedState>) -> Result<u32, CommandError> {
-    let mut runtime = state.inner.runtime.write().await;
-    runtime.create_screen()
+pub async fn create_screen(
+    app: AppHandle,
+    state: State<'_, ManagedState>,
+) -> Result<u32, CommandError> {
+    let screen_id = {
+        let mut runtime = state.inner.runtime.write().await;
+        runtime.create_screen()?
+    };
+    persist_startup_config(&app, state.inner().clone()).await?;
+    Ok(screen_id)
 }
 
 #[tauri::command]
@@ -1227,6 +1189,7 @@ pub async fn delete_screen(
     }
 
     rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
+    persist_startup_config(&app, state.inner().clone()).await?;
 
     Ok(())
 }
@@ -1234,16 +1197,14 @@ pub async fn delete_screen(
 #[cfg(test)]
 mod tests {
     use super::{
-        append_home_relative_config_locations, apply_secret_updates, atomic_write,
-        build_auto_populate_assignments, collect_saved_secrets, resolve_auto_populated_url,
-        resolve_config_secrets, DEFAULT_CONFIG_FILE_NAME,
+        apply_secret_updates, atomic_write, build_auto_populate_assignments, collect_saved_secrets,
+        resolve_auto_populated_url, resolve_config_secrets,
     };
     use crate::app_state::ManagedState;
     use crate::state::{AppRuntimeState, PanelSecret};
     use rtsp_core::{default_app_config, AutoPopulateTool, SavedSecret, PANELS_PER_SCREEN};
     use rtsp_secrets::{SecretError, SecretPayload, SecretStore};
     use std::collections::{HashMap, HashSet};
-    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
@@ -1300,26 +1261,6 @@ mod tests {
     }
 
     #[test]
-    fn home_relative_config_locations_cover_common_directories() {
-        let home_dir = PathBuf::from("/tmp/rtsp-viewer-home");
-        let mut paths = Vec::new();
-
-        append_home_relative_config_locations(&mut paths, &home_dir);
-
-        let expected = vec![
-            home_dir.join(DEFAULT_CONFIG_FILE_NAME),
-            home_dir.join("Documents").join(DEFAULT_CONFIG_FILE_NAME),
-            home_dir.join("Downloads").join(DEFAULT_CONFIG_FILE_NAME),
-            home_dir.join("Pictures").join(DEFAULT_CONFIG_FILE_NAME),
-            home_dir.join("Desktop").join(DEFAULT_CONFIG_FILE_NAME),
-            home_dir.join("Music").join(DEFAULT_CONFIG_FILE_NAME),
-            home_dir.join("Videos").join(DEFAULT_CONFIG_FILE_NAME),
-            home_dir.join("Movies").join(DEFAULT_CONFIG_FILE_NAME),
-        ];
-
-        assert_eq!(paths, expected);
-    }
-
     fn sample_tool() -> AutoPopulateTool {
         AutoPopulateTool {
             base_url_template:
@@ -1437,7 +1378,9 @@ mod tests {
         config.screens[0].panels[0].camera_num = Some(1);
         config.screens[0].panels[0].sub_num = Some(0);
 
-        let secrets = resolve_config_secrets(&config).expect("config secrets should resolve");
+        let store = MockSecretStore::default();
+        let secrets =
+            resolve_config_secrets(&config, &store).expect("config secrets should resolve");
         let panel_secret = secrets
             .get("screen_0_panel_0")
             .and_then(|secret| secret.as_ref())
@@ -1470,7 +1413,8 @@ mod tests {
             },
         );
 
-        let desired = resolve_config_secrets(&config).expect("config secrets should resolve");
+        let desired =
+            resolve_config_secrets(&config, store.as_ref()).expect("config secrets should resolve");
         let existing = HashSet::from(["screen_0_panel_0".to_string()]);
         apply_secret_updates(&managed, desired, existing).expect("secret updates should succeed");
 
@@ -1480,6 +1424,31 @@ mod tests {
             .expect("secret should exist");
         assert_eq!(payload.username, "new-user");
         assert_eq!(payload.password, "new-pass");
+    }
+
+    #[test]
+    fn resolve_config_secrets_uses_secret_store_when_config_file_has_no_saved_secrets() {
+        let store = Arc::new(MockSecretStore::default());
+        store
+            .set(
+                "screen_0_panel_0",
+                SecretPayload {
+                    username: "secret-user".to_string(),
+                    password: "secret-pass".to_string(),
+                },
+            )
+            .expect("seed secret should succeed");
+
+        let config = default_app_config(1);
+        let secrets =
+            resolve_config_secrets(&config, store.as_ref()).expect("config secrets should resolve");
+        let panel_secret = secrets
+            .get("screen_0_panel_0")
+            .and_then(|secret| secret.as_ref())
+            .expect("secret store value should be present");
+
+        assert_eq!(panel_secret.username, "secret-user");
+        assert_eq!(panel_secret.password, "secret-pass");
     }
 
     #[test]

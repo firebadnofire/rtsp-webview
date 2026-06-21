@@ -618,12 +618,16 @@ impl AppRuntimeState {
             .screens
             .iter()
             .flat_map(|screen| {
-                screen.panels.iter().enumerate().filter_map(move |(panel_idx, panel)| {
-                    panel.config.start_on_load.then_some(PanelKey {
-                        screen_id: screen.id,
-                        panel_id: panel_idx as u8,
+                screen
+                    .panels
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(panel_idx, panel)| {
+                        panel.config.start_on_load.then_some(PanelKey {
+                            screen_id: screen.id,
+                            panel_id: panel_idx as u8,
+                        })
                     })
-                })
             })
             .collect::<Vec<_>>();
         let next_active_stream_count = desired_active_keys
@@ -872,12 +876,7 @@ mod tests {
 
         assert_eq!(
             runtime.preview_fps_rebalance_keys(None).unwrap(),
-            vec![
-                inherited_b,
-                inherited_c,
-                inherited_d,
-                inherited_e
-            ]
+            vec![inherited_b, inherited_c, inherited_d, inherited_e]
         );
     }
 

@@ -121,3 +121,43 @@ RUN set -eux; \
 FROM scratch AS export
 
 COPY --from=package /out/ /
+
+FROM debian:bullseye-slim AS flatpak-ffmpeg-bundle
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    pkg-config \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    ffmpeg_version="7.1.1"; \
+    curl -fsSLO "https://ffmpeg.org/releases/ffmpeg-${ffmpeg_version}.tar.xz"; \
+    tar -xf "ffmpeg-${ffmpeg_version}.tar.xz"; \
+    cd "ffmpeg-${ffmpeg_version}"; \
+    ./configure \
+        --prefix=/out/ffmpeg \
+        --disable-debug \
+        --disable-doc \
+        --disable-ffplay \
+        --disable-ffprobe \
+        --disable-shared \
+        --enable-static \
+        --disable-x86asm; \
+    make -j"$(nproc)"; \
+    make install; \
+    strip /out/ffmpeg/bin/ffmpeg; \
+    bundle_dir="/out/ffmpeg"; \
+    rm -rf \
+        "${bundle_dir}/include" \
+        "${bundle_dir}/lib" \
+        "${bundle_dir}/share"
+
+FROM scratch AS flatpak-ffmpeg-export
+
+COPY --from=flatpak-ffmpeg-bundle /out/ /

@@ -46,6 +46,14 @@ Originally this started as a quick proof of concept in Python, but it didn’t s
 
 See [build-helpers](https://pubcode.archuser.org/firebadnofire/rtsp-webview/src/branch/main/build-helpers#windows-helpers) for more info on how to build this software yourself using the automated scripts.
 
+On Linux, a local Flatpak bundle can be built with:
+
+```bash
+./build-helpers/linux/flatpak/build-flatpak.sh
+```
+
+The helper writes a bundle to `dist/flatpak/`. The Flatpak bundles its own `ffmpeg` runtime, keeps startup state inside the app's own config directory, and only requests the permissions needed for RTSP networking, X11 display access, GPU acceleration, and the desktop secret service. It does not require broad home-directory or host-OS filesystem access.
+
 Note for MacOS users, I do not pay for an Apple developer license. You will need to remove the quarantine xattrs, details in the release page.
 
 ## Release Artifacts
@@ -124,23 +132,13 @@ Encoded password:  testpw3%40000
 
 ## Config Autoload
 
-On startup, the app looks for `rtsp_viewer_config.json` and automatically loads the first one it finds.
+On startup, the app loads its internal startup config from the app-specific config directory:
 
-Current search order:
+- Linux: `$XDG_CONFIG_HOME/com.firebadnofire.rtspviewer/rtsp_viewer_config.json`
+- macOS: `~/Library/Application Support/com.firebadnofire.rtspviewer/rtsp_viewer_config.json`
+- Windows: `%APPDATA%\\com.firebadnofire.rtspviewer\\rtsp_viewer_config.json`
 
-1. current working directory
-2. executable directory
-3. user home directory
-4. Documents
-5. Downloads
-6. Pictures
-7. Desktop
-8. Music
-9. Videos
-10. Movies
-11. repository root in debug builds
-
-When a config is saved, any camera that is active at save time is marked to start again when that config is loaded later.
+That file is maintained by the app itself as screens, panel settings, credentials, and UI state change. Manual save/load still uses user-chosen JSON files, but startup restore no longer depends on scanning arbitrary host directories.
 
 ## Windows: Full Setup From `git clone` To Running The App
 

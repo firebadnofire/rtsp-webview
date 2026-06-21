@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.firebadnofire.rtspviewer</id>
+  <name>RTSP Viewer</name>
+  <summary>Desktop RTSP camera viewer</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <launchable type="desktop-id">com.firebadnofire.rtspviewer.desktop</launchable>
+  <description>
+    <p>RTSP Viewer is a desktop application for building and operating multi-camera RTSP layouts with bulk autoconfiguration and saved credentials.</p>
+  </description>
+  <url type="homepage">https://pubcode.archuser.org/firebadnofire/rtsp-webview</url>
+  <content_rating type="oars-1.1" />
+</component>

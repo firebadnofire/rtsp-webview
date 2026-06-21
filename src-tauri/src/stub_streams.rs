@@ -291,6 +291,7 @@ fn spawn_ffmpeg_process(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    configure_ffmpeg_runtime_env(&mut command, &ffmpeg_executable)?;
     configure_background_process(&mut command);
 
     let mut child = command
@@ -378,6 +379,14 @@ fn append_executable_relative_search_dirs(
     push_unique_search_dir(search_dirs, executable_dir.to_path_buf());
     push_unique_search_dir(search_dirs, executable_dir.join("bin"));
 
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(app_root) = executable_dir.parent() {
+        push_unique_search_dir(
+            search_dirs,
+            app_root.join("libexec").join("ffmpeg").join("bin"),
+        );
+    }
+
     #[cfg(target_os = "macos")]
     if let Some(contents_dir) = executable_dir.parent() {
         push_unique_search_dir(search_dirs, contents_dir.join("Resources"));
@@ -402,7 +411,15 @@ fn append_platform_ffmpeg_search_dirs(search_dirs: &mut Vec<PathBuf>) {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn append_platform_ffmpeg_search_dirs(search_dirs: &mut Vec<PathBuf>) {
-    for directory in ["/usr/local/bin", "/usr/bin", "/bin", "/snap/bin"] {
+    for directory in [
+        "/app/bin",
+        "/app/libexec/ffmpeg/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/usr/sbin",
+        "/bin",
+        "/snap/bin",
+    ] {
         push_unique_search_dir(search_dirs, PathBuf::from(directory));
     }
 }
@@ -474,6 +491,48 @@ fn configure_background_process(command: &mut Command) {
 
 #[cfg(not(windows))]
 fn configure_background_process(_command: &mut Command) {}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn configure_ffmpeg_runtime_env(
+    command: &mut Command,
+    ffmpeg_executable: &Path,
+) -> Result<(), CommandError> {
+    let Some(executable_dir) = ffmpeg_executable.parent() else {
+        return Ok(());
+    };
+    if executable_dir.file_name().and_then(|name| name.to_str()) != Some("bin") {
+        return Ok(());
+    }
+    let Some(bundle_root) = executable_dir.parent() else {
+        return Ok(());
+    };
+    if bundle_root.file_name().and_then(|name| name.to_str()) != Some("ffmpeg") {
+        return Ok(());
+    }
+
+    let library_dir = bundle_root.join("lib");
+    if !library_dir.is_dir() {
+        return Ok(());
+    }
+
+    let mut library_paths = vec![library_dir];
+    if let Some(existing) = std::env::var_os("LD_LIBRARY_PATH") {
+        library_paths.extend(std::env::split_paths(&existing));
+    }
+
+    let joined = std::env::join_paths(library_paths)
+        .map_err(|error| CommandError::decode(format!("invalid ffmpeg library path: {}", error)))?;
+    command.env("LD_LIBRARY_PATH", joined);
+    Ok(())
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+fn configure_ffmpeg_runtime_env(
+    _command: &mut Command,
+    _ffmpeg_executable: &Path,
+) -> Result<(), CommandError> {
+    Ok(())
+}
 
 fn build_preview_filter(preview_fps: u8) -> String {
     format!(
@@ -831,5 +890,16 @@ mod tests {
                 PathBuf::from("/Applications/RTSP Viewer.app/Contents/Resources/bin"),
             ]
         );
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn executable_relative_search_dirs_include_bundled_flatpak_ffmpeg() {
+        let current_exe = PathBuf::from("/app/bin/rtsp_viewer_tauri");
+        let mut search_dirs = Vec::new();
+
+        append_executable_relative_search_dirs(&mut search_dirs, Some(&current_exe));
+
+        assert!(search_dirs.contains(&PathBuf::from("/app/libexec/ffmpeg/bin")));
     }
 }

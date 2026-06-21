@@ -7,6 +7,7 @@ Current layout:
 ```text
 build-helpers/
 ├── linux/
+│   └── flatpak/
 ├── mac/
 └── windows/
 ```
@@ -191,6 +192,40 @@ The CI packaging workflow uses the generated `x86_64` tarball as an internal pac
 ```text
 dist/releases/rtsp-viewer-linux-x86_64.AppImage
 ```
+
+## Linux Flatpak Helper
+
+From the repository root, run:
+
+```bash
+./build-helpers/linux/flatpak/build-flatpak.sh
+```
+
+This helper uses the host `flatpak` CLI directly, so it does not require `flatpak-builder`.
+It reuses the existing Docker-based Linux tarball build to avoid host-specific GTK/WebKit development package drift.
+
+It will:
+
+1. ensure `org.gnome.Platform//50` and `org.gnome.Sdk//50` are installed for the current user
+2. build a Linux tarball in Docker for the current Flatpak architecture
+3. extract the compiled release binary from that tarball
+4. assemble a Flatpak app filesystem
+5. export a local Flatpak repository
+6. emit a single-file Flatpak bundle
+
+Output:
+
+```text
+dist/flatpak/RTSP-Viewer-0.1.0-<arch>.flatpak
+```
+
+Runtime notes:
+
+- the Flatpak keeps network access for RTSP streams
+- the Flatpak currently exposes X11 display access and intentionally does not request the Wayland socket because the GTK/WebKit stack crashes on launch with Wayland enabled in this package
+- the Flatpak is allowed to talk to `org.freedesktop.secrets` for stored credentials
+- the helper bundles a dedicated `ffmpeg` executable under `/app/libexec/ffmpeg/bin/ffmpeg`
+- startup restore uses the app-owned config directory instead of scanning the host filesystem
 
 ## macOS App Helper
 
