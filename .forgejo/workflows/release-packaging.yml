@@ -4,7 +4,6 @@ name: Release Packaging
   push:
     tags:
       - 'v*'
-      - 'V*'
 
 env:
   GITHUB_MIRROR_REPOSITORY: firebadnofire/rtsp-webview
@@ -24,7 +23,7 @@ env:
 jobs:
   package:
     name: Package ${{ matrix.package.name }}
-    if: ${{ startsWith(forgejo.ref, 'refs/tags/v') || startsWith(forgejo.ref, 'refs/tags/V') || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/V') }}
+    if: ${{ startsWith(forgejo.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ${{ matrix.package.runs_on }}
     strategy:
       fail-fast: false
