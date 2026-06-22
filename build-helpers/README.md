@@ -223,6 +223,7 @@ Runtime notes:
 
 - the Flatpak keeps network access for RTSP streams
 - the Flatpak currently exposes X11 display access and intentionally does not request the Wayland socket because the GTK/WebKit stack crashes on launch with Wayland enabled in this package
+- the Flatpak intentionally does not request `--device=dri`; on this package/runtime combination that path led to GBM allocation failures and a blank window, while GTK/WebKit falls back cleanly without it
 - the Flatpak is allowed to talk to `org.freedesktop.secrets` for stored credentials
 - the helper bundles a dedicated `ffmpeg` executable under `/app/libexec/ffmpeg/bin/ffmpeg`
 - startup restore uses the app-owned config directory instead of scanning the host filesystem

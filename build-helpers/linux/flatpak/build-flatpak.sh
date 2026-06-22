@@ -165,7 +165,6 @@ flatpak build-finish \
     --share=ipc \
     --share=network \
     --socket=fallback-x11 \
-    --device=dri \
     --talk-name=org.freedesktop.secrets \
     "${BUILD_DIR}"
 

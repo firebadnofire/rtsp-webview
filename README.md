@@ -52,7 +52,7 @@ On Linux, a local Flatpak bundle can be built with:
 ./build-helpers/linux/flatpak/build-flatpak.sh
 ```
 
-The helper writes a bundle to `dist/flatpak/`. The Flatpak bundles its own `ffmpeg` runtime, keeps startup state inside the app's own config directory, and only requests the permissions needed for RTSP networking, X11 display access, GPU acceleration, and the desktop secret service. It does not require broad home-directory or host-OS filesystem access.
+The helper writes a bundle to `dist/flatpak/`. The Flatpak bundles its own `ffmpeg` runtime, keeps startup state inside the app's own config directory, and only requests the permissions needed for RTSP networking, X11 display access, and the desktop secret service. It does not require broad home-directory or host-OS filesystem access.
 
 Note for MacOS users, I do not pay for an Apple developer license. You will need to remove the quarantine xattrs, details in the release page.
 
