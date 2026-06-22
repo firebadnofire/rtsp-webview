@@ -2,6 +2,6 @@
 Type=Application
 Name=RTSP Viewer
 Exec=rtsp-viewer %U
-Icon=com.firebadnofire.rtspviewer
+Icon=org.archuser.rtspviewer
 Terminal=false
 Categories=AudioVideo;Video;

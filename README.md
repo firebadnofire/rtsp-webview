@@ -134,9 +134,9 @@ Encoded password:  testpw3%40000
 
 On startup, the app loads its internal startup config from the app-specific config directory:
 
-- Linux: `$XDG_CONFIG_HOME/com.firebadnofire.rtspviewer/rtsp_viewer_config.json`
-- macOS: `~/Library/Application Support/com.firebadnofire.rtspviewer/rtsp_viewer_config.json`
-- Windows: `%APPDATA%\\com.firebadnofire.rtspviewer\\rtsp_viewer_config.json`
+- Linux: `$XDG_CONFIG_HOME/org.archuser.rtspviewer/rtsp_viewer_config.json`
+- macOS: `~/Library/Application Support/org.archuser.rtspviewer/rtsp_viewer_config.json`
+- Windows: `%APPDATA%\\org.archuser.rtspviewer\\rtsp_viewer_config.json`
 
 That file is maintained by the app itself as screens, panel settings, credentials, and UI state change. Manual save/load still uses user-chosen JSON files, but startup restore no longer depends on scanning arbitrary host directories.
 
