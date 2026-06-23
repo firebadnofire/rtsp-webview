@@ -25,6 +25,7 @@ export const renderPanelCard = (input: PanelCardInput): string => {
   const recordLabel = recording ? 'Stop Recording' : 'Record'
   const cardClass = active ? 'panel-card active' : 'panel-card'
   const selectedSubtype = panel.config.sub_num
+  const maskedBadge = panel.config.masked ? '<span class="status-chip status-idle">Masked</span>' : ''
   const image = `<img
       class="panel-frame ${hasFrame ? '' : 'hidden'}"
       data-frame-image="true"
@@ -57,6 +58,7 @@ export const renderPanelCard = (input: PanelCardInput): string => {
       </div>
       <div class="panel-header-actions">
         ${subtypePicker}
+        ${maskedBadge}
         <span class="${statusClass(panel.status)}">${escapeHtml(statusText(panel.status))}</span>
       </div>
     </div>

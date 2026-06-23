@@ -482,6 +482,26 @@ async fn restart_panel(
     start_panel(app, managed, key).await
 }
 
+fn collect_unmasked_panel_keys_for_screens(
+    runtime: &AppRuntimeState,
+    screen_ids: &[u32],
+) -> Result<Vec<PanelKey>, CommandError> {
+    let mut keys = Vec::new();
+    for &screen_id in screen_ids {
+        for panel_id in 0..PANELS_PER_SCREEN as u8 {
+            let key = PanelKey {
+                screen_id,
+                panel_id,
+            };
+            if runtime.is_masked(key)? {
+                continue;
+            }
+            keys.push(key);
+        }
+    }
+    Ok(keys)
+}
+
 async fn rebalance_active_preview_fps(
     app: &AppHandle,
     managed: ManagedState,
@@ -869,18 +889,13 @@ pub async fn start_screen(
     state: State<'_, ManagedState>,
     screen_id: u32,
 ) -> Result<(), CommandError> {
+    let keys = {
+        let runtime = state.inner.runtime.read().await;
+        collect_unmasked_panel_keys_for_screens(&runtime, &[screen_id])?
+    };
     let mut first_error: Option<CommandError> = None;
-    for panel_id in 0..PANELS_PER_SCREEN as u8 {
-        if let Err(error) = start_panel(
-            &app,
-            state.inner().clone(),
-            PanelKey {
-                screen_id,
-                panel_id,
-            },
-        )
-        .await
-        {
+    for key in keys {
+        if let Err(error) = start_panel(&app, state.inner().clone(), key).await {
             if first_error.is_none() {
                 first_error = Some(error);
             }
@@ -900,17 +915,12 @@ pub async fn stop_screen(
     state: State<'_, ManagedState>,
     screen_id: u32,
 ) -> Result<(), CommandError> {
-    for panel_id in 0..PANELS_PER_SCREEN as u8 {
-        stop_panel(
-            &app,
-            state.inner().clone(),
-            PanelKey {
-                screen_id,
-                panel_id,
-            },
-            true,
-        )
-        .await?;
+    let keys = {
+        let runtime = state.inner.runtime.read().await;
+        collect_unmasked_panel_keys_for_screens(&runtime, &[screen_id])?
+    };
+    for key in keys {
+        stop_panel(&app, state.inner().clone(), key, true).await?;
     }
     rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
     persist_startup_config(&app, state.inner().clone()).await?;
@@ -922,24 +932,17 @@ pub async fn start_all_global(
     app: AppHandle,
     state: State<'_, ManagedState>,
 ) -> Result<(), CommandError> {
-    let screen_count = { state.inner.runtime.read().await.screen_count() as u32 };
+    let keys = {
+        let runtime = state.inner.runtime.read().await;
+        let screen_ids = (0..runtime.screen_count() as u32).collect::<Vec<_>>();
+        collect_unmasked_panel_keys_for_screens(&runtime, &screen_ids)?
+    };
 
     let mut first_error: Option<CommandError> = None;
-    for screen_id in 0..screen_count {
-        for panel_id in 0..PANELS_PER_SCREEN as u8 {
-            if let Err(error) = start_panel(
-                &app,
-                state.inner().clone(),
-                PanelKey {
-                    screen_id,
-                    panel_id,
-                },
-            )
-            .await
-            {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
+    for key in keys {
+        if let Err(error) = start_panel(&app, state.inner().clone(), key).await {
+            if first_error.is_none() {
+                first_error = Some(error);
             }
         }
     }
@@ -958,20 +961,13 @@ pub async fn stop_all_global(
     app: AppHandle,
     state: State<'_, ManagedState>,
 ) -> Result<(), CommandError> {
-    let screen_count = { state.inner.runtime.read().await.screen_count() as u32 };
-    for screen_id in 0..screen_count {
-        for panel_id in 0..PANELS_PER_SCREEN as u8 {
-            stop_panel(
-                &app,
-                state.inner().clone(),
-                PanelKey {
-                    screen_id,
-                    panel_id,
-                },
-                true,
-            )
-            .await?;
-        }
+    let keys = {
+        let runtime = state.inner.runtime.read().await;
+        let screen_ids = (0..runtime.screen_count() as u32).collect::<Vec<_>>();
+        collect_unmasked_panel_keys_for_screens(&runtime, &screen_ids)?
+    };
+    for key in keys {
+        stop_panel(&app, state.inner().clone(), key, true).await?;
     }
     rebalance_active_preview_fps(&app, state.inner().clone(), None).await?;
     persist_startup_config(&app, state.inner().clone()).await?;
@@ -1198,10 +1194,11 @@ pub async fn delete_screen(
 mod tests {
     use super::{
         apply_secret_updates, atomic_write, build_auto_populate_assignments, collect_saved_secrets,
-        resolve_auto_populated_url, resolve_config_secrets,
+        collect_unmasked_panel_keys_for_screens, resolve_auto_populated_url,
+        resolve_config_secrets,
     };
     use crate::app_state::ManagedState;
-    use crate::state::{AppRuntimeState, PanelSecret};
+    use crate::state::{AppRuntimeState, PanelKey, PanelSecret};
     use rtsp_core::{default_app_config, AutoPopulateTool, SavedSecret, PANELS_PER_SCREEN};
     use rtsp_secrets::{SecretError, SecretPayload, SecretStore};
     use std::collections::{HashMap, HashSet};
@@ -1470,5 +1467,25 @@ mod tests {
             .expect("saved secret should be present");
         assert_eq!(secret.username, "camera-user");
         assert_eq!(secret.password, "camera-pass");
+    }
+
+    #[test]
+    fn collective_actions_skip_masked_panels() {
+        let mut runtime = AppRuntimeState::from_config(default_app_config(2), HashMap::new());
+        runtime.screens[0].panels[1].config.masked = true;
+        runtime.screens[1].panels[3].config.masked = true;
+
+        let keys = collect_unmasked_panel_keys_for_screens(&runtime, &[0, 1])
+            .expect("unmasked key collection should succeed");
+
+        assert!(!keys.contains(&PanelKey {
+            screen_id: 0,
+            panel_id: 1,
+        }));
+        assert!(!keys.contains(&PanelKey {
+            screen_id: 1,
+            panel_id: 3,
+        }));
+        assert_eq!(keys.len(), 6);
     }
 }

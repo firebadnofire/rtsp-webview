@@ -59,6 +59,7 @@ export interface PanelConfig {
   sub_num: number | null
   transport: Transport
   latency_ms: number
+  masked: boolean
   secret_ref: SecretRef
   advanced: AdvancedConfig
 }
@@ -74,6 +75,7 @@ export interface PanelConfigPatch {
   sub_num?: number | null
   transport?: Transport
   latency_ms?: number
+  masked?: boolean
   advanced?: AdvancedConfigPatch
 }
 
@@ -180,6 +182,7 @@ export interface SettingsModalState {
     subNum: string
     transport: Transport
     latencyMs: string
+    masked: boolean
     username: string
     password: string
     connectionTimeoutMs: string

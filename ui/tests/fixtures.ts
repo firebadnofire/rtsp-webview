@@ -12,6 +12,7 @@ const makePanel = (screenId: number, panelId: number, state: PanelState = 'idle'
     sub_num: null,
     transport: 'tcp' as const,
     latency_ms: 200,
+    masked: false,
     secret_ref: {
       key: `screen_${screenId}_panel_${panelId}`
     },

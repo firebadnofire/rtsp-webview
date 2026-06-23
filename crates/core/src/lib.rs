@@ -177,6 +177,8 @@ pub struct PanelConfig {
     pub latency_ms: u32,
     #[serde(default)]
     pub start_on_load: bool,
+    #[serde(default)]
+    pub masked: bool,
     pub secret_ref: SecretRef,
     #[serde(default)]
     pub advanced: AdvancedConfig,
@@ -194,6 +196,7 @@ pub struct PanelConfigPatch {
     pub sub_num: Option<Option<u32>>,
     pub transport: Option<Transport>,
     pub latency_ms: Option<u32>,
+    pub masked: Option<bool>,
     pub advanced: Option<AdvancedConfigPatch>,
 }
 
@@ -349,6 +352,7 @@ pub fn default_panel_config(screen_id: u32, panel_id: u8) -> PanelConfig {
         transport: Transport::Tcp,
         latency_ms: 200,
         start_on_load: false,
+        masked: false,
         secret_ref: SecretRef {
             key: secret_key_for(screen_id, panel_id),
         },
@@ -522,6 +526,9 @@ pub fn apply_panel_patch(
     }
     if let Some(latency_ms) = patch.latency_ms {
         panel.latency_ms = latency_ms;
+    }
+    if let Some(masked) = patch.masked {
+        panel.masked = masked;
     }
     if let Some(advanced_patch) = patch.advanced {
         apply_advanced_patch(&mut panel.advanced, advanced_patch);
@@ -831,6 +838,24 @@ mod tests {
         .expect("legacy config should deserialize");
 
         assert!(!parsed.screens[0].panels[0].start_on_load);
+        assert!(!parsed.screens[0].panels[0].masked);
+    }
+
+    #[test]
+    fn panel_patch_can_update_masked_flag() {
+        let mut panel = default_panel_config(0, 0);
+        assert!(!panel.masked);
+
+        apply_panel_patch(
+            &mut panel,
+            PanelConfigPatch {
+                masked: Some(true),
+                ..PanelConfigPatch::default()
+            },
+        )
+        .expect("mask patch should apply");
+
+        assert!(panel.masked);
     }
 
     #[test]

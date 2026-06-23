@@ -49,6 +49,7 @@ export const renderSettingsModal = ({
           </select>
         </label>
         <label>Latency (ms)<input data-field="latencyMs" type="number" min="0" max="5000" value="${valueOrEmpty(modal.form.latencyMs)}" /></label>
+        <label class="checkbox-row"><input data-field="masked" type="checkbox" ${boolAttr(modal.form.masked)} /> Mask from all actions</label>
         <div class="secret-status">${escapeHtml(secretStatus)}</div>
         <label>Username<input data-field="username" value="${valueOrEmpty(modal.form.username)}" autocomplete="off" /></label>
         <label>Password<input data-field="password" type="password" value="${valueOrEmpty(modal.form.password)}" autocomplete="off" /></label>

@@ -613,6 +613,7 @@ export class RtspViewerApp {
         subNum: panel.config.sub_num !== null ? String(panel.config.sub_num) : String(ranges.subtypeNumbers[0] ?? 0),
         transport: panel.config.transport,
         latencyMs: String(panel.config.latency_ms),
+        masked: panel.config.masked,
         username: '',
         password: '',
         connectionTimeoutMs: String(panel.config.advanced.connection_timeout_ms),
@@ -787,6 +788,7 @@ export class RtspViewerApp {
         sub_num: cameraNum !== null ? subNum : null,
         transport: modal.form.transport,
         latency_ms: clampInt(parseNumber(modal.form.latencyMs, panel.config.latency_ms), 0, 5000),
+        masked: modal.form.masked,
         advanced: this.createAdvancedPatch(panel.config, modal, inheritedFps)
       }
 

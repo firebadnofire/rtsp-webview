@@ -522,6 +522,10 @@ impl AppRuntimeState {
         keys
     }
 
+    pub fn is_masked(&self, key: PanelKey) -> Result<bool, CommandError> {
+        Ok(self.get_panel(key)?.config.masked)
+    }
+
     pub fn create_screen(&mut self) -> Result<u32, CommandError> {
         if self.screens.len() >= rtsp_core::MAX_SCREEN_COUNT {
             return Err(CommandError::config("maximum screen count is 32"));
@@ -1059,5 +1063,27 @@ mod tests {
             .expect("merge should work");
 
         assert!(runtime.screens[0].panels[0].secret.is_none());
+    }
+
+    #[test]
+    fn masked_flag_round_trips_through_runtime_config() {
+        let mut runtime = runtime_with_screens(1);
+        let key = PanelKey {
+            screen_id: 0,
+            panel_id: 2,
+        };
+
+        runtime
+            .update_panel_config(
+                key,
+                PanelConfigPatch {
+                    masked: Some(true),
+                    ..PanelConfigPatch::default()
+                },
+            )
+            .expect("patch should apply");
+
+        assert!(runtime.is_masked(key).expect("panel should exist"));
+        assert!(runtime.to_app_config().screens[0].panels[2].masked);
     }
 }

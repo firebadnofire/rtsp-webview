@@ -183,6 +183,40 @@ describe('app integration', () => {
     await app.destroy()
   })
 
+  it('saves masked panels through panel settings', async () => {
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const ipc = createMockIpc()
+    const events = new MockEventClient()
+    const app = createRtspViewerApp(root, { ipc, events })
+    await app.start()
+    await flush()
+
+    const openSettings = root.querySelector('[data-action="open-settings"]') as HTMLButtonElement
+    openSettings.click()
+    await flush()
+
+    const masked = root.querySelector('[data-field="masked"]') as HTMLInputElement
+    masked.checked = true
+    masked.dispatchEvent(new Event('input', { bubbles: true }))
+    masked.dispatchEvent(new Event('change', { bubbles: true }))
+
+    const form = root.querySelector('form[data-action="submit-settings"]') as HTMLFormElement
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flush()
+
+    expect(ipc.updatePanelConfig).toHaveBeenCalledWith(
+      0,
+      0,
+      expect.objectContaining({
+        masked: true
+      })
+    )
+
+    await app.destroy()
+  })
+
   it('attempts to load the startup config on app start', async () => {
     const root = document.createElement('div')
     document.body.appendChild(root)
