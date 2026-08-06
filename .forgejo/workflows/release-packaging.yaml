@@ -75,7 +75,10 @@ jobs:
                   echo "Missing required macOS signing tool: gpg. Install GnuPG or provide Homebrew on the runner PATH." >&2
                   exit 1
                 fi
-                brew install gnupg
+                HOMEBREW_NO_ASK=1 \
+                  HOMEBREW_NO_AUTO_UPDATE=1 \
+                  HOMEBREW_NO_ENV_HINTS=1 \
+                  brew install gnupg
               fi
               for tool in node npm cargo rustup lipo codesign gpg jq; do
                 if ! command -v "$tool" >/dev/null 2>&1; then

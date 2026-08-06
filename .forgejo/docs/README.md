@@ -43,7 +43,8 @@ rg -n 'APK|apk|Android|android|Launch Pad|launchpad|Gradle|gradlew|KEYSTORE|setu
 macOS:
 
 - `bash`, `git`, `base64`, `curl`, `jq`
-- GnuPG as `gpg` (installed through Homebrew by the workflow when needed)
+- GnuPG as `gpg` (installed through Homebrew by the workflow when needed, with
+  prompts and automatic updates disabled for the CI invocation)
 - Node.js 24 LTS as `node`, plus `npm`, `cargo`, `rustup`
 - Xcode Command Line Tools
 - `lipo`
