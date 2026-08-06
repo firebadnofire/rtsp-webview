@@ -452,6 +452,23 @@ export class RtspViewerApp {
           await this.deps.ipc.startStream(screenId, panelId)
           await this.syncState()
           break
+        case 'toggle-mask': {
+          const snapshot = this.store.snapshot()
+          const panel = snapshot.data?.screens[screenId]?.panels[panelId]
+          if (!panel) {
+            break
+          }
+          const nextMasked = !panel.config.masked
+          await this.deps.ipc.updatePanelConfig(screenId, panelId, { masked: nextMasked })
+          await this.syncState()
+          this.notify(
+            'success',
+            nextMasked
+              ? `Masked Screen ${screenId + 1} Panel ${panelId + 1} from all actions`
+              : `Unmasked Screen ${screenId + 1} Panel ${panelId + 1}`
+          )
+          break
+        }
         case 'stop-stream':
           await this.deps.ipc.stopStream(screenId, panelId)
           await this.syncState()

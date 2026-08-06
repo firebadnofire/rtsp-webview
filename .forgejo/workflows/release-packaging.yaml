@@ -7,6 +7,7 @@ name: Release Packaging
 
 env:
   GITHUB_MIRROR_REPOSITORY: firebadnofire/rtsp-webview
+  RELEASE_SIGNING_KEY_FINGERPRINT: 7D6EF134D851C8DA0862D97494F31AF374E2EE3C
   RELEASE_BODY: |
     Automated cross-platform release assets for RTSP Viewer.
 
@@ -15,6 +16,26 @@ env:
     - Windows installer: `rtsp-viewer-windows-amd64-installer.exe`
     - macOS universal app: `rtsp-viewer-macos-app.zip`
     - Linux: `rtsp-viewer-linux-x86_64.AppImage`
+
+    Every release artifact has an ASCII-armored detached signature with the
+    same filename plus `.asc`. Download both files, recover the signing key
+    using any one of these methods, and verify the artifact:
+
+    ```sh
+    gpg --keyserver hkps://keys.openpgp.org --recv-keys 7D6EF134D851C8DA0862D97494F31AF374E2EE3C
+    # Or:
+    gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys 7D6EF134D851C8DA0862D97494F31AF374E2EE3C
+    # Or:
+    curl --proto '=https' --tlsv1.2 -fsSLo william.asc https://archuser.org/gpg/william.asc
+    gpg --import william.asc
+
+    gpg --fingerprint 7D6EF134D851C8DA0862D97494F31AF374E2EE3C
+    gpg --verify <artifact>.asc <artifact>
+    ```
+
+    Confirm the recovered key fingerprint is exactly
+    `7D6E F134 D851 C8DA 0862 D974 94F3 1AF3 74E2 EE3C` before trusting a
+    successful signature verification.
 
     macOS note:
     After unzipping `RTSP Viewer.app`, remove the quarantine flag before first launch:
@@ -32,7 +53,7 @@ jobs:
           - name: macOS
             runs_on: macos-latest
             build_shell: bash
-            required_tools: base64 curl git jq node npm cargo rustup lipo codesign
+            required_tools: base64 curl git gpg jq node npm cargo rustup lipo codesign
             prepare_checkout_command: |
               set -euo pipefail
               for tool in base64 git; do
@@ -49,7 +70,14 @@ jobs:
                   echo "$path_entry" >> "${GITHUB_PATH:-/tmp/github_path}"
                 fi
               done
-              for tool in node npm cargo rustup lipo codesign jq; do
+              if ! command -v gpg >/dev/null 2>&1; then
+                if ! command -v brew >/dev/null 2>&1; then
+                  echo "Missing required macOS signing tool: gpg. Install GnuPG or provide Homebrew on the runner PATH." >&2
+                  exit 1
+                fi
+                brew install gnupg
+              fi
+              for tool in node npm cargo rustup lipo codesign gpg jq; do
                 if ! command -v "$tool" >/dev/null 2>&1; then
                   echo "Missing required macOS build tool after PATH bootstrap: ${tool}" >&2
                   echo "Host-mode Forgejo runners may need ${HOME}/.cargo/bin, /opt/homebrew/bin, or /usr/local/bin added to the service environment." >&2
@@ -76,7 +104,7 @@ jobs:
           - name: Windows
             runs_on: ubuntu-22.04
             build_shell: bash
-            required_tools: base64 cargo cargo-tauri cargo-xwin curl git jq makensis node npm rustup zip clang-cl llvm-rc lld-link
+            required_tools: base64 cargo cargo-tauri cargo-xwin curl git gpg jq makensis node npm rustup zip clang-cl llvm-rc lld-link
             prepare_checkout_command: |
               set -euo pipefail
               missing_tools=""
@@ -316,7 +344,7 @@ jobs:
           - name: Linux AppImage
             runs_on: ubuntu-latest
             build_shell: bash
-            required_tools: base64 cargo curl file git jq mksquashfs node npm rustup tar zip
+            required_tools: base64 cargo curl file git gpg jq mksquashfs node npm rustup tar zip
             prepare_checkout_command: |
               set -euo pipefail
               missing_tools=""
@@ -544,6 +572,25 @@ jobs:
             exit 1
           fi
 
+      - name: Validate release signing inputs
+        shell: bash
+        env:
+          CI_KEY: ${{ secrets.CI_KEY }}
+          CI_KEY_PASSPHRASE: ${{ secrets.CI_KEY_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CI_KEY:-}" ]; then
+            echo "Missing required secret: CI_KEY" >&2
+            echo "CI_KEY must contain the ASCII-armored private release-signing key or its base64 encoding." >&2
+            exit 1
+          fi
+          if [ -z "${CI_KEY_PASSPHRASE:-}" ]; then
+            echo "Missing required secret: CI_KEY_PASSPHRASE" >&2
+            echo "CI_KEY_PASSPHRASE must unlock the private release-signing key." >&2
+            exit 1
+          fi
+
       - name: Run environment setup
         if: ${{ matrix.package.setup_command != '' }}
         shell: ${{ matrix.package.build_shell }}
@@ -600,6 +647,72 @@ jobs:
 
             if [ ! -s "$artifact_path" ]; then
               echo "Release artifact is empty: ${artifact_path}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Sign and verify release artifacts
+        shell: bash
+        env:
+          ARTIFACT_PATHS: ${{ matrix.package.artifact_paths }}
+          CI_KEY: ${{ secrets.CI_KEY }}
+          CI_KEY_PASSPHRASE: ${{ secrets.CI_KEY_PASSPHRASE }}
+          EXPECTED_SIGNING_FINGERPRINT: ${{ env.RELEASE_SIGNING_KEY_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CI_KEY:-}" ]; then
+            echo "Missing required secret: CI_KEY" >&2
+            exit 1
+          fi
+          if [ -z "${CI_KEY_PASSPHRASE:-}" ]; then
+            echo "Missing required secret: CI_KEY_PASSPHRASE" >&2
+            exit 1
+          fi
+
+          signing_home="$(mktemp -d "${RUNNER_TEMP:-/tmp}/rtsp-viewer-gnupg.XXXXXX")"
+          key_file="${signing_home}/release-signing-key"
+          cleanup_signing_home() {
+            rm -rf "${signing_home}"
+          }
+          trap cleanup_signing_home EXIT
+          chmod 0700 "${signing_home}"
+          export GNUPGHOME="${signing_home}"
+
+          case "$CI_KEY" in
+            *'-----BEGIN PGP PRIVATE KEY BLOCK-----'*)
+              printf '%s' "$CI_KEY" > "$key_file"
+              ;;
+            *)
+              if ! printf '%s' "$CI_KEY" | base64 --decode > "$key_file" 2>/dev/null; then
+                printf '%s' "$CI_KEY" | base64 -D > "$key_file"
+              fi
+              ;;
+          esac
+
+          gpg --batch --import "$key_file"
+          rm -f "$key_file"
+
+          if ! gpg --batch --with-colons --fingerprint --list-secret-keys \
+            | awk -F: -v expected="$EXPECTED_SIGNING_FINGERPRINT" \
+                '$1 == "fpr" && toupper($10) == expected { found = 1 } END { exit !found }'; then
+            echo "CI_KEY does not contain the expected signing key: ${EXPECTED_SIGNING_FINGERPRINT}" >&2
+            exit 1
+          fi
+
+          for artifact_path in $ARTIFACT_PATHS; do
+            signature_path="${artifact_path}.asc"
+            rm -f "$signature_path"
+            gpg --batch --yes --armor --detach-sign \
+              --pinentry-mode loopback \
+              --passphrase-fd 0 \
+              --local-user "$EXPECTED_SIGNING_FINGERPRINT" \
+              --output "$signature_path" \
+              "$artifact_path" \
+              < <(printf '%s' "$CI_KEY_PASSPHRASE")
+            gpg --batch --verify "$signature_path" "$artifact_path"
+            if [ ! -s "$signature_path" ]; then
+              echo "Detached signature is missing or empty: ${signature_path}" >&2
               exit 1
             fi
           done
@@ -728,24 +841,26 @@ jobs:
             exit 1
           fi
 
-          for asset_path in $asset_paths; do
-            if [ ! -f "$asset_path" ]; then
-              echo "Release asset does not exist or is not a file: ${asset_path}" >&2
-              exit 1
-            fi
+          for artifact_path in $asset_paths; do
+            for asset_path in "$artifact_path" "${artifact_path}.asc"; do
+              if [ ! -s "$asset_path" ]; then
+                echo "Release asset does not exist or is empty: ${asset_path}" >&2
+                exit 1
+              fi
 
-            asset_name="$(basename "$asset_path")"
-            asset_name_encoded="$(jq -nr --arg value "$asset_name" '$value|@uri')"
-            existing_asset_id="$(api_request GET "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets" \
-              | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' \
-              | head -n 1)"
+              asset_name="$(basename "$asset_path")"
+              asset_name_encoded="$(jq -nr --arg value "$asset_name" '$value|@uri')"
+              existing_asset_id="$(api_request GET "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets" \
+                | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' \
+                | head -n 1)"
 
-            if [ -n "$existing_asset_id" ]; then
-              api_request DELETE "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets/${existing_asset_id}" >/dev/null
-            fi
+              if [ -n "$existing_asset_id" ]; then
+                api_request DELETE "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets/${existing_asset_id}" >/dev/null
+              fi
 
-            api_request POST "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
-              --form "attachment=@${asset_path}" >/dev/null
+              api_request POST "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
+                --form "attachment=@${asset_path}" >/dev/null
+            done
           done
 
       - name: Mirror repository to GitHub
@@ -1074,23 +1189,25 @@ jobs:
             exit 1
           fi
 
-          for asset_path in $asset_paths; do
-            if [ ! -f "$asset_path" ]; then
-              echo "GitHub release asset does not exist or is not a file: ${asset_path}" >&2
-              exit 1
-            fi
+          for artifact_path in $asset_paths; do
+            for asset_path in "$artifact_path" "${artifact_path}.asc"; do
+              if [ ! -s "$asset_path" ]; then
+                echo "GitHub release asset does not exist or is empty: ${asset_path}" >&2
+                exit 1
+              fi
 
-            asset_name="$(basename "$asset_path")"
-            asset_name_encoded="$(jq -nr --arg value "$asset_name" '$value|@uri')"
-            existing_asset_id="$(github_request GET "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets" \
-              | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' \
-              | head -n 1)"
+              asset_name="$(basename "$asset_path")"
+              asset_name_encoded="$(jq -nr --arg value "$asset_name" '$value|@uri')"
+              existing_asset_id="$(github_request GET "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets" \
+                | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' \
+                | head -n 1)"
 
-            if [ -n "$existing_asset_id" ]; then
-              github_request DELETE "${api_url}/repos/${owner}/${repo}/releases/assets/${existing_asset_id}" >/dev/null
-            fi
+              if [ -n "$existing_asset_id" ]; then
+                github_request DELETE "${api_url}/repos/${owner}/${repo}/releases/assets/${existing_asset_id}" >/dev/null
+              fi
 
-            github_request POST "${upload_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
-              --header "Content-Type: application/octet-stream" \
-              --data-binary "@${asset_path}" >/dev/null
+              github_request POST "${upload_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
+                --header "Content-Type: application/octet-stream" \
+                --data-binary "@${asset_path}" >/dev/null
+            done
           done

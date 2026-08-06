@@ -1,6 +1,6 @@
 # Release Packaging Workflow
 
-This document explains `.forgejo/workflows/release-packaging.yml` for future
+This document explains `.forgejo/workflows/release-packaging.yaml` for future
 maintenance. The workflow builds Windows, macOS, and Linux release assets for
 RTSP Viewer when a version tag is pushed, publishes each asset to the matching
 Forgejo release, mirrors Git refs to GitHub, and uploads each asset to the
@@ -91,8 +91,33 @@ Linux:
 11. Copies the GNU-target WebView2 loader DLL to the same directory.
 12. Packages both files as `dist/releases/rtsp-viewer-windows-amd64.zip`.
 
-Each job validates that all configured release artifacts exist and are non-empty before
-publishing.
+Each job validates that all configured release artifacts exist and are non-empty
+before signing. It imports the private key from `CI_KEY`, unlocks it using
+`CI_KEY_PASSPHRASE`, checks for the expected fingerprint, and creates and
+locally verifies an ASCII-armored detached `.asc` signature for every artifact.
+Both the artifact and signature are then published.
+
+## Verifying Release Signatures
+
+Recover the public signing key with any one of these commands:
+
+```bash
+gpg --keyserver hkps://keys.openpgp.org --recv-keys 7D6EF134D851C8DA0862D97494F31AF374E2EE3C
+# Or:
+gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys 7D6EF134D851C8DA0862D97494F31AF374E2EE3C
+# Or:
+curl --proto '=https' --tlsv1.2 -fsSLo william.asc https://archuser.org/gpg/william.asc
+gpg --import william.asc
+```
+
+Confirm that the recovered fingerprint is exactly
+`7D6E F134 D851 C8DA 0862 D974 94F3 1AF3 74E2 EE3C`, then download an artifact
+and its matching `.asc` file and run:
+
+```bash
+gpg --fingerprint 7D6EF134D851C8DA0862D97494F31AF374E2EE3C
+gpg --verify <artifact>.asc <artifact>
+```
 
 ## Forgejo Release Publishing
 
@@ -194,6 +219,8 @@ runner labels or runner provisioning before pushing a release tag.
 - `curl` calls restrict protocols to HTTPS and disable deprecated TLS versions
   below TLS 1.2 while allowing TLS 1.3 when the server negotiates it.
 - No release credentials are hardcoded.
+- `CI_KEY` and `CI_KEY_PASSPHRASE` are read only from workflow secrets. The
+  temporary GnuPG home is deleted after artifact signing.
 - `GH_KEY` is read only from workflow secrets and is used for GitHub repository
   mirroring and GitHub release asset publishing.
 - No Android keystore, signing password, or APK-specific secret is used.
@@ -205,7 +232,7 @@ runner labels or runner provisioning before pushing a release tag.
 Before pushing a release tag, run:
 
 ```bash
-ruby -e 'require "yaml"; YAML.load_file(".forgejo/workflows/release-packaging.yml"); puts "yaml ok"'
+ruby --disable-gems -e 'require "yaml"; YAML.load_file(".forgejo/workflows/release-packaging.yaml"); puts "yaml ok"'
 rg -n 'APK|apk|Android|android|Launch Pad|launchpad|Gradle|gradlew|KEYSTORE|setup-java|setup-android|actions/checkout|uses:' .forgejo/workflows
 npm --prefix ui ci
 npm --prefix ui run build

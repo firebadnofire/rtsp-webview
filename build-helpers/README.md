@@ -157,7 +157,7 @@ This repository includes a Docker-based Linux build pipeline for the Tauri deskt
 
 In non-interactive runs, it falls back to the current machine's native Linux architecture when recognized, otherwise `linux/amd64`.
 
-Before building, the helper creates or reuses the external Docker network `build-system`, probes `http://apt-cacher-ng:3142`, and only passes an APT proxy into the Docker build when that cache is reachable. The temporary `buildx` builder is removed automatically when the script exits, so it does not sit idle afterward.
+Before building, the helper creates or reuses the external Docker network `build-system`, probes `http://apt-cacher-ng:3142`, and only passes an APT proxy into the Docker build when that cache is reachable. Native-architecture local builds use plain `docker build`; cross-architecture builds create a temporary `buildx` builder that is removed automatically when the script exits.
 
 When run interactively, the helper now shows a numbered architecture menu before the Docker build starts:
 

@@ -50,6 +50,10 @@ default_build_platform() {
     esac
 }
 
+host_build_platform() {
+    default_build_platform
+}
+
 normalize_build_platform() {
     local selection="${1:-}"
 
@@ -159,6 +163,33 @@ ensure_builder() {
         >/dev/null
 }
 
+can_use_local_docker_build() {
+    [[ "$1" == "$(host_build_platform)" ]]
+}
+
+run_local_docker_build() {
+    docker build \
+        --file "${DOCKERFILE}" \
+        --target export \
+        --build-arg "APT_HTTP_PROXY=" \
+        --output "${OUTPUT_DIR}" \
+        "$@" \
+        "${ROOT_DIR}"
+}
+
+run_buildx_build() {
+    docker buildx build \
+        --builder "${BUILDER_NAME}" \
+        --platform "${BUILD_PLATFORM}" \
+        --network "${BUILD_NETWORK_NAME}" \
+        --file "${DOCKERFILE}" \
+        --target export \
+        --build-arg "APT_HTTP_PROXY=${APT_HTTP_PROXY}" \
+        --output "type=local,dest=${OUTPUT_DIR}" \
+        "$@" \
+        "${ROOT_DIR}"
+}
+
 record_output_dir() {
     local output_dir="$1"
 
@@ -186,9 +217,6 @@ if [[ "${BUILD_PLATFORM}" == "quit" ]]; then
     exit 0
 fi
 
-trap cleanup_builder EXIT
-ensure_builder
-
 if [[ -n "${APT_HTTP_PROXY}" ]]; then
     printf 'Using apt proxy %s\n' "${APT_HTTP_PROXY}"
 else
@@ -197,16 +225,18 @@ fi
 
 printf 'Building Linux tarball for %s into %s\n' "${BUILD_PLATFORM}" "${OUTPUT_DIR}"
 
-docker buildx build \
-    --builder "${BUILDER_NAME}" \
-    --platform "${BUILD_PLATFORM}" \
-    --network "${BUILD_NETWORK_NAME}" \
-    --file "${DOCKERFILE}" \
-    --target export \
-    --build-arg "APT_HTTP_PROXY=${APT_HTTP_PROXY}" \
-    --output "type=local,dest=${OUTPUT_DIR}" \
-    "$@" \
-    "${ROOT_DIR}"
+if can_use_local_docker_build "${BUILD_PLATFORM}"; then
+    printf 'Using local Docker builder for native architecture %s\n' "${BUILD_PLATFORM}"
+    if [[ -n "${APT_HTTP_PROXY}" ]]; then
+        printf 'Skipping apt proxy for local Docker build because custom builder networking is unavailable\n'
+    fi
+    run_local_docker_build "$@"
+else
+    trap cleanup_builder EXIT
+    ensure_builder
+    printf 'Using buildx container builder for cross-architecture build %s\n' "${BUILD_PLATFORM}"
+    run_buildx_build "$@"
+fi
 
 record_output_dir "${OUTPUT_DIR}"
 

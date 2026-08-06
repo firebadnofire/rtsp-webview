@@ -478,6 +478,16 @@ button:disabled {
   gap: 8px;
 }
 
+.panel-mask-toggle {
+  margin-right: auto;
+}
+
+.panel-mask-toggle.is-masked {
+  background: #203f36;
+  border-color: #203f36;
+  color: #f6fff8;
+}
+
 .notifications {
   position: fixed;
   top: 14px;

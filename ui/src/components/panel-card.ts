@@ -26,6 +26,8 @@ export const renderPanelCard = (input: PanelCardInput): string => {
   const cardClass = active ? 'panel-card active' : 'panel-card'
   const selectedSubtype = panel.config.sub_num
   const maskedBadge = panel.config.masked ? '<span class="status-chip status-idle">Masked</span>' : ''
+  const maskButtonLabel = panel.config.masked ? 'Unmask' : 'Mask'
+  const maskButtonClass = panel.config.masked ? 'panel-mask-toggle is-masked' : 'panel-mask-toggle'
   const image = `<img
       class="panel-frame ${hasFrame ? '' : 'hidden'}"
       data-frame-image="true"
@@ -64,6 +66,7 @@ export const renderPanelCard = (input: PanelCardInput): string => {
     </div>
     <div class="panel-viewport">${image}</div>
     <div class="panel-controls">
+      <button class="${maskButtonClass}" data-action="toggle-mask" data-screen-id="${screenId}" data-panel-id="${panelId}">${maskButtonLabel}</button>
       <button data-action="start-stream" data-screen-id="${screenId}" data-panel-id="${panelId}">Start</button>
       <button data-action="stop-stream" data-screen-id="${screenId}" data-panel-id="${panelId}">Stop</button>
       <button data-action="snapshot" data-screen-id="${screenId}" data-panel-id="${panelId}" ${playing ? '' : 'disabled'}>Snapshot</button>
