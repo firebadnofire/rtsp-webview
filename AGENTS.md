@@ -77,10 +77,8 @@ The system iterates through these ranges to generate cameras.
 
 For each camera channel value in the specified range:
 
-For each subtype value in the subtype range:
-
-1. Substitute template variables.
-2. Generate a camera panel.
+1. Substitute template variables using the first subtype in the range.
+2. Generate one camera panel with a subtype selector containing all values in the subtype range.
 3. Assign the panel to the next available grid slot.
 
 Panels are grouped into screens automatically.
@@ -299,6 +297,8 @@ Subtype range: 0-1
 
 Expected result:
 
-32 generated panels (16 channels × 2 subtypes).
+16 generated panels, each with a preconfigured subtype selector offering 0 and 1.
+
+The initial selected subtype is 0, and the panels occupy 4 screens.
 
 Panels must then be distributed automatically across screens (4 panels per screen).

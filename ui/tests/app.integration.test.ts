@@ -479,6 +479,8 @@ describe('app integration', () => {
     await flush()
 
     const picker = root.querySelector('[data-subtype-picker="true"][data-panel-id="0"]') as HTMLSelectElement
+    expect(Array.from(picker.options, option => option.value)).toEqual(['0', '1'])
+    expect(picker.value).toBe('0')
     picker.value = '1'
     picker.dispatchEvent(new Event('change', { bubbles: true }))
     await flush()

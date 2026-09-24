@@ -212,18 +212,15 @@ fn build_auto_populate_assignments(
     tool: &AutoPopulateTool,
 ) -> Result<Vec<Assignment>, CommandError> {
     let camera_numbers = (tool.camera_num_start..=tool.camera_num_end).collect::<Vec<_>>();
-    let subtype_numbers = (tool.sub_num_start..=tool.sub_num_end).collect::<Vec<_>>();
     if camera_numbers.is_empty() {
         return Err(CommandError::config("camera range is empty"));
     }
-    if subtype_numbers.is_empty() {
+    if tool.sub_num_start > tool.sub_num_end {
         return Err(CommandError::config("subtype range is empty"));
     }
 
-    // Generate assignments for each camera and each subtype. The previous
-    // implementation only used the first subtype, which is no longer
-    // compatible with the new bulk configuration UI.
-    let total_assignments = camera_numbers.len() * subtype_numbers.len();
+    // Each channel occupies one panel; the saved subtype range supplies its selector.
+    let total_assignments = camera_numbers.len();
     let max_panels = MAX_SCREEN_COUNT * PANELS_PER_SCREEN;
     if total_assignments > max_panels {
         return Err(CommandError::config(format!(
@@ -234,15 +231,14 @@ fn build_auto_populate_assignments(
 
     let mut assignments = Vec::with_capacity(total_assignments);
     for camera_num in &camera_numbers {
-        for sub_num in &subtype_numbers {
-            let resolved_url = resolve_auto_populated_url(tool, *camera_num, *sub_num);
-            let parsed = parse_rtsp_url(&resolved_url)?;
-            assignments.push(Assignment {
-                camera_num: *camera_num,
-                sub_num: *sub_num,
-                parsed,
-            });
-        }
+        let sub_num = tool.sub_num_start;
+        let resolved_url = resolve_auto_populated_url(tool, *camera_num, sub_num);
+        let parsed = parse_rtsp_url(&resolved_url)?;
+        assignments.push(Assignment {
+            camera_num: *camera_num,
+            sub_num,
+            parsed,
+        });
     }
     Ok(assignments)
 }
@@ -1284,7 +1280,7 @@ mod tests {
     }
 
     #[test]
-    fn assignment_generation_uses_all_subtypes_per_camera() {
+    fn assignment_generation_creates_one_panel_per_camera() {
         let assignments = build_auto_populate_assignments(&sample_tool())
             .expect("assignment generation should succeed");
         let ordered_pairs = assignments
@@ -1292,7 +1288,7 @@ mod tests {
             .map(|assignment| (assignment.camera_num, assignment.sub_num))
             .collect::<Vec<_>>();
         // Default tool has cameras 1-2 and subtypes 0-1
-        assert_eq!(ordered_pairs, vec![(1, 0), (1, 1), (2, 0), (2, 1)]);
+        assert_eq!(ordered_pairs, vec![(1, 0), (2, 0)]);
     }
 
     #[test]
@@ -1303,8 +1299,31 @@ mod tests {
         let assignments =
             build_auto_populate_assignments(&tool).expect("assignment generation should succeed");
         let needed_screens = assignments.len().div_ceil(PANELS_PER_SCREEN);
-        assert_eq!(assignments.len(), 10); // 5 * 2
-        assert_eq!(needed_screens, 3); // 10 panels -> 3 screens (4 per screen)
+        assert_eq!(assignments.len(), 5);
+        assert_eq!(needed_screens, 2); // 5 panels -> 2 screens (4 per screen)
+    }
+
+    #[test]
+    fn assignment_generation_selects_first_subtype_in_custom_path() {
+        let mut tool = sample_tool();
+        tool.sub_num_start = 2;
+        tool.sub_num_end = 4;
+        tool.base_url_template =
+            "rtsp://$USERNAME:$PASSWORD@$IP:$PORT/live/channel$cameraNum/sub$subNum".into();
+        let assignments = build_auto_populate_assignments(&tool).unwrap();
+        assert_eq!(assignments.len(), 2);
+        assert_eq!(assignments[0].sub_num, 2);
+        assert_eq!(assignments[0].parsed.path, "live/channel1/sub2");
+        assert_eq!(assignments[1].parsed.path, "live/channel2/sub2");
+    }
+
+    #[test]
+    fn assignment_generation_packs_sixteen_channels_into_four_screens() {
+        let mut tool = sample_tool();
+        tool.camera_num_end = 16;
+        let assignments = build_auto_populate_assignments(&tool).unwrap();
+        assert_eq!(assignments.len(), 16);
+        assert_eq!(assignments.len().div_ceil(PANELS_PER_SCREEN), 4);
     }
 
     #[test]

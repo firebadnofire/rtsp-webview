@@ -114,7 +114,8 @@ The app asks for:
 
 Generation behavior:
 
-- one panel is created for each channel/subtype combination
+- one panel is created for each channel, initially using the first subtype
+- each panel has a subtype selector populated from the configured subtype range
 - panels are assigned in order
 - every 4 panels create a new screen automatically
 
@@ -329,7 +330,7 @@ Channels: 1-16
 Subtypes: 0-1
 ```
 
-That produces 32 panels across 8 screens.
+That produces 16 panels across 4 screens, each with subtype options 0 and 1.
 
 ## Linux Tarball Build
 
